@@ -308,6 +308,7 @@ Current implementation should prefer `workspace-write`; treat `danger-full-acces
 
 Write through unit tests in advance before impelemnting functionality. 
 
+Update `skills/` and `README.md` according to the latest AGENTS.md.
 Before committing Rust code changes, run:
 
 ```bash
@@ -333,6 +334,7 @@ The smoke test should use the public task-management command surface. Do not use
 
 ## Planned Work
 
+- [ ] Add skills according agents.md.
 - [ ] Implement `tickclaw check`.
 - [ ] Implement `tickclaw deamon`.
 - [ ] Implement `tickclaw task list`.
