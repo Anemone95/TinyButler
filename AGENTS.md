@@ -484,12 +484,13 @@ Follow the authoritative implementation order above. Do not implement Telegram c
 - [x] Add Telegram polling/ingress.
 - [x] Map `/task_list`, `/task_run`, `/task_status`, `/task_enable`, and `/task_disable` to CLI handlers.
 - [x] Add Gemini runner.
-- [ ] Add `stream_args` config for interactive Telegram code-agent chat.
-- [ ] Define the internal `ChatAgent` interface.
-- [ ] Implement the Codex `ChatAgent` adapter using `codex-codes`.
-- [ ] Add local `tickclaw chat new` REPL command.
-- [ ] Add local `tickclaw chat session` resume command.
-- [ ] Add Telegram `/new`, `/session`, and `/abort` for interactive code-agent sessions.
+- [x] Add `stream_args` config for interactive Telegram code-agent chat.
+- [x] Define the internal `ChatAgent` interface.
+- [x] Implement the Codex `ChatAgent` adapter using `codex-codes`.
+- [x] Add a local smoke path for the Codex `ChatAgent` adapter.
+- [x] Add local `tickclaw chat new` REPL command.
+- [x] Add local `tickclaw chat session` resume command.
+- [x] Add Telegram `/new`, `/session`, and `/abort` for interactive code-agent sessions.
 - [ ] Add Gemini interactive streaming adapter.
 - [ ] Add Claude runner.
 - [ ] Add six-month task log retention and monthly `.tgz` log archives.
