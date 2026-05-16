@@ -135,6 +135,8 @@ type: command # task kind; command tasks execute run.sh
 timeout: 1800 # maximum run time in seconds
 ```
 
+Every task runs inside its own task directory, `~/.tickclaw/tasks/<task-name>/`. Task configs must not define `workspace`, `notify`, or `concurrency`; those behaviors are fixed by the scheduler.
+
 `session` for agent tasks:
 
 - `independent`: every run starts a new agent session.
@@ -154,10 +156,18 @@ The daemon should:
 6. run `agent.md` or `run.sh` according to `type` and `runner`
 7. write stdout and stderr to `logs/`
 8. update `state.json`
-9. send Telegram notification for every task execution
+9. send Telegram notification according to the task type and result rules below
 
-The task directory is always the working directory. 
-Telegram notification is always attempted after execution. 
+The task directory is always the working directory.
+
+Telegram notification rules:
+
+- Agent task success: the daemon does not auto-notify. The agent may call `tickclaw telegram ...` itself when a notification is useful.
+- Agent task failure, timeout, or lock conflict: the daemon sends a fallback Telegram notification.
+- Shell task success with non-empty stdout: the daemon sends a Telegram notification with a stdout summary.
+- Shell task success with empty stdout: the daemon sends no Telegram notification.
+- Shell task failure: the daemon sends a Telegram notification even when stdout is empty, using failure, stderr, and log summary.
+
 If a task is already locked because the previous run has not finished, TickClaw should report that execution attempt as `Run Failure` instead of queuing, skipping by policy, or running in parallel.
 
 The scheduler uses local-time cron expressions through the Rust `cron` crate. Five-field cron expressions are normalized by prefixing seconds with `0`.
@@ -290,6 +300,7 @@ code_agents:
 
 - Require an explicit task directory.
 - Run every task from its own task directory.
+- Task configs must not define `workspace`, `notify`, or `concurrency`.
 - Use `--sandbox workspace-write` for Codex tasks by default.
 - Do not default to `danger-full-access`.
 - Store Telegram secrets only in local `~/.tickclaw/config.yaml`.
@@ -332,11 +343,14 @@ rm -rf /home/wenyuan/TickClaw/.tickclaw-test
 
 The smoke test should use the public task-management command surface. Do not use the old low-level `run`, `state`, or `logs` commands for documented behavior checks.
 
+Any other develop requirement ask in cli should write down in this document!
+
 ## Planned Work
 
 - [ ] Add skills according agents.md.
 - [ ] Implement `tickclaw check`.
-- [ ] Implement `tickclaw deamon`.
+- [ ] Align task schema and scheduler rules with this document.
+- [ ] Implement `tickclaw daemon`.
 - [ ] Implement `tickclaw task list`.
 - [ ] Implement `tickclaw task run <name>`.
 - [ ] Implement `tickclaw task status <name>`.
