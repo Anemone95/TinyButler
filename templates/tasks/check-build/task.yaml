@@ -1,0 +1,9 @@
+name: check-build
+enabled: false
+schedule: "*/30 * * * *"
+runner: shell
+type: command
+timeout: 300
+notify: telegram
+concurrency: skip
+

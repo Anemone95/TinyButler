@@ -152,7 +152,7 @@ The TickClaw daemon does only a few things:
 
 The scheduler does not use Linux `cron`. Cron expressions are parsed inside TickClaw.
 
-The first implementation should use `croniter` plus a simple daemon loop. That is enough for this project and avoids keeping scheduler state in a separate framework.
+The first implementation should use Rust with a simple daemon loop and the `cron` crate. That is enough for this project and avoids keeping scheduler state in a separate framework.
 
 ## State File
 
@@ -191,9 +191,12 @@ Configuration lives in `~/.tickclaw/config.yaml`:
 
 ```yaml
 telegram:
-  bot_token_env: TICKCLAW_TELEGRAM_BOT_TOKEN
-  chat_id_env: TICKCLAW_TELEGRAM_CHAT_ID
+  bot_token: "123456789:..."
+  chat_id: "123456789"
+  parse_mode: Markdown
 ```
+
+`parse_mode` is passed to Telegram `sendMessage`. The default is `Markdown`, so messages sent through `tickclaw telegram test` can contain Telegram Markdown such as `*bold*`, `_italic_`, and inline code.
 
 ## Future Telegram Interface
 
@@ -228,17 +231,16 @@ Context reuse should be explicit and inspectable. A future design can decide whe
 ```text
 TickClaw/
   README.md
-  pyproject.toml
-  src/tickclaw/
-    __init__.py
-    cli.py
-    config.py
-    daemon.py
-    fs.py
-    schema.py
-    scheduler.py
-    runner.py
-    telegram.py
+  Cargo.toml
+  src/
+    main.rs
+    config.rs
+    task.rs
+    scheduler.rs
+    runner.rs
+    telegram.rs
+    state.rs
+    lock.rs
   templates/
     config.yaml
     tasks/
@@ -260,6 +262,15 @@ tickclaw run daily-report
 tickclaw state daily-report
 tickclaw logs daily-report
 tickclaw telegram test
+```
+
+Build and run locally:
+
+```bash
+cargo build
+target/debug/tickclaw init
+target/debug/tickclaw scan
+target/debug/tickclaw run daily-report
 ```
 
 Codex can manage tasks without these commands by editing files directly:
@@ -289,7 +300,7 @@ Initial defaults:
 - require an explicit workspace for agent tasks
 - use `--sandbox workspace-write` for Codex tasks
 - do not default to `danger-full-access`
-- store Telegram secrets in environment variables
+- store Telegram secrets only in local `~/.tickclaw/config.yaml`
 - redact bot tokens in logs
 - write logs under each task's `logs/` directory
 - do not expose a public HTTP server in the MVP
@@ -297,18 +308,30 @@ Initial defaults:
 - validate `task.yaml` before running anything
 - enforce execution timeouts
 
-## Initial Implementation Plan
+## Implementation Status
 
-1. Create Python package and CLI.
-2. Add `~/.tickclaw/config.yaml` loading.
-3. Add task schema parsing and validation.
-4. Add file-based scheduler with `croniter`.
-5. Add shell runner.
-6. Add Codex agent runner.
-7. Add task locking, log writing, and `state.json` updates.
-8. Add Telegram notification.
-9. Add examples.
-10. Run a smoke test with a harmless shell task before running real `codex exec`.
+Implemented:
+
+- Rust CLI and daemon
+- `~/.tickclaw/config.yaml` loading
+- `task.yaml` parsing and validation
+- file-based scheduler with local-time cron expressions
+- shell task runner
+- Codex agent runner
+- `session: independent | reuse` for Codex agent tasks
+- task lock files
+- per-run logs
+- `state.json` updates
+- Telegram completion notifications
+- templates and `init`
+
+Still planned:
+
+- Telegram ingress commands
+- Claude and Gemini runners
+- richer context/session policies
+- log rotation
+- queue and parallel concurrency policies
 
 
 ## SubAgents
