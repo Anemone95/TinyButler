@@ -4,7 +4,7 @@ TickClaw is a lightweight version of OpenClaw focused on receiving and running s
 
 ## Overview
 
-TickClaw lets you manage scheduled tasks on a remote server through local coding agents such as Codex, Claude, or Gemini. Tasks can be simple scripts that write results to the console log, or prompts executed by an AI coding agent.
+TickClaw lets you manage scheduled tasks on a remote server through local coding agents such as Codex, Claude, or Gemini. Tasks can be simple scripts that write results to the console log, or agent jobs executed by an AI coding agent.
 
 ## Usage
 
@@ -16,7 +16,7 @@ TickClaw lets you manage scheduled tasks on a remote server through local coding
 
 4. Each task can be either:
    - a program that writes output to the console log, or
-   - a prompt executed by Codex, Claude, Gemini, or another coding agent.
+   - an agent task executed by Codex, Claude, Gemini, or another coding agent.
 
 5. TickClaw runs as a daemon on the server. It scans task directories, executes due tasks, writes logs and state files, and reports completion through Telegram.
 
@@ -45,7 +45,7 @@ Runtime data lives in one TickClaw home directory.
   tasks/
     daily-report/
       task.yaml
-      prompt.md
+      agent.md
       logs/
         2026-05-16T09-00-00.log
       state.json
@@ -58,7 +58,7 @@ Runtime data lives in one TickClaw home directory.
 
 Each task is a directory under `tasks/`. The only required file is `task.yaml`. A task can also include:
 
-- `prompt.md` for an agent prompt task
+- `agent.md` for an agent task
 - `run.sh` for a shell task
 - `logs/` for run logs
 - `state.json` for the latest runtime state
@@ -69,7 +69,7 @@ TickClaw supports two task types in the first version.
 
 ### Agent Task
 
-A Agent task runs a coding agent with `agent.md` as input.
+An agent task runs a coding agent with `agent.md` as input.
 
 ```yaml
 # tasks/daily-report/task.yaml
@@ -77,7 +77,8 @@ name: daily-report
 enabled: true
 schedule: "0 9 * * *"
 runner: codex
-type: prompt
+type: agent
+session: independent
 workspace: /home/wenyuan/work/project
 timeout: 3600
 notify: telegram
@@ -88,11 +89,10 @@ updated_at: "2026-05-16T10:00:00+02:00"
 codex:
   model: gpt-5.5
   sandbox: workspace-write
-  resume: false
 ```
 
 ```text
-# tasks/daily-report/prompt.md
+# tasks/daily-report/agent.md
 Check the latest experiment results in this repository and summarize what changed.
 ```
 
@@ -102,7 +102,14 @@ The first Codex command can be:
 codex exec --json --sandbox workspace-write --cd /home/wenyuan/work/project -
 ```
 
-TickClaw sends `prompt.md` through stdin.
+TickClaw sends `agent.md` through stdin.
+
+`session` controls whether an agent task starts from a fresh context or continues the previous context for the same scheduled task:
+
+- `independent`: every run starts a new agent session
+- `reuse`: TickClaw resumes the previous successful session for this task when the runner supports session resume
+
+For Codex, `session: reuse` means TickClaw stores the latest Codex session id in `state.json` and uses `codex exec resume <session-id>` on the next run. If no previous session id exists, the first run starts a new session.
 
 ### Shell Task
 
@@ -138,7 +145,7 @@ The TickClaw daemon does only a few things:
 2. validate task schema
 3. decide whether a task is due
 4. lock the task directory before execution
-5. run `prompt.md` or `run.sh` according to `type` and `runner`
+5. run `agent.md` or `run.sh` according to `type` and `runner`
 6. write stdout and stderr to `logs/`
 7. update `state.json`
 8. send a Telegram notification when configured
@@ -157,6 +164,7 @@ The first implementation should use `croniter` plus a simple daemon loop. That i
   "last_status": "success",
   "last_exit_code": 0,
   "last_log": "logs/2026-05-16T09-00-00.log",
+  "session_id": "00000000-0000-0000-0000-000000000000",
   "next_run_at": "2026-05-17T09:00:00+02:00",
   "running": false,
   "run_count": 12,
@@ -164,7 +172,7 @@ The first implementation should use `croniter` plus a simple daemon loop. That i
 }
 ```
 
-Codex can read this file to understand what happened. Codex should generally edit `task.yaml`, `prompt.md`, and `run.sh`; TickClaw owns `state.json`, `logs/`, and lock files.
+Codex can read this file to understand what happened. Codex should generally edit `task.yaml`, `agent.md`, and `run.sh`; TickClaw owns `state.json`, `logs/`, and lock files.
 
 ## Telegram Notifications
 
@@ -236,7 +244,7 @@ TickClaw/
     tasks/
       daily-report/
         task.yaml
-        prompt.md
+        agent.md
     .gitignore
 ```
 
@@ -257,7 +265,7 @@ tickclaw telegram test
 Codex can manage tasks without these commands by editing files directly:
 
 ```text
-SSH to my server, create a TickClaw task under ~/.tickclaw/tasks/ that runs every day at 9 AM, and put the task prompt in prompt.md.
+SSH to my server, create a TickClaw agent task under ~/.tickclaw/tasks/ that runs every day at 9 AM, and put the agent instructions in agent.md.
 ```
 
 ## Concurrency
@@ -278,7 +286,7 @@ Unattended agent execution needs conservative defaults.
 Initial defaults:
 
 - require an explicit task directory
-- require an explicit workspace for prompt tasks
+- require an explicit workspace for agent tasks
 - use `--sandbox workspace-write` for Codex tasks
 - do not default to `danger-full-access`
 - store Telegram secrets in environment variables
@@ -296,7 +304,7 @@ Initial defaults:
 3. Add task schema parsing and validation.
 4. Add file-based scheduler with `croniter`.
 5. Add shell runner.
-6. Add Codex prompt runner.
+6. Add Codex agent runner.
 7. Add task locking, log writing, and `state.json` updates.
 8. Add Telegram notification.
 9. Add examples.
