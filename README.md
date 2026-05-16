@@ -12,11 +12,13 @@ TickClaw lets you manage scheduled tasks on a remote server through local coding
 
 2. Add the server as a remote SSH target in your local Codex environment.
 
-3. Ask Codex to create, update, list, run, or delete scheduled tasks.
+3. Ask Codex to create, update, list, run, or delete scheduled tasks by editing files under `~/.tickclaw/tasks/`.
 
 4. Each task can be either:
    - a program that writes output to the console log, or
    - a prompt executed by Codex, Claude, Gemini, or another coding agent.
+
+5. TickClaw runs as a daemon on the server. It scans task directories, executes due tasks, writes logs and state files, and reports completion through Telegram.
 
 ## Planned Features
 
@@ -26,82 +28,168 @@ TickClaw lets you manage scheduled tasks on a remote server through local coding
 
 ## Why This Exists
 
-Codex/Claude Destop Automations are useful, but linux does have it. Besides, you can not run prompt 
+Codex/Claude Destop Automations are useful, but linux does have it. Besides, you can not run task though different agents.
 
-## Proposed MVP
+## Design
 
-The MVP has four pieces.
+TickClaw should be managed through files, not through MCP or a complex API. This keeps the system small and inspectable: Codex, Claude, Gemini, a human in Vim, or a future Telegram bot can all manage the same tasks because the interface is just files.
 
-1. **Scheduler service**
+## Directory Layout
 
-   A long-running local process wakes up periodically, checks due jobs in SQLite, and starts them.
+Runtime data lives in one TickClaw home directory.
 
-   It supports:
+```text
+~/.tickclaw/
+  config.yaml
+  tickclaw.log
+  tasks/
+    daily-report/
+      task.yaml
+      prompt.md
+      logs/
+        2026-05-16T09-00-00.log
+      state.json
+    check-build/
+      task.yaml
+      run.sh
+      logs/
+      state.json
+```
 
-   - one-shot jobs
-   - interval jobs, such as every 10 minutes
-   - cron-expression jobs, implemented inside TickClaw, not through system cron
-   - manual `run now`
-   - enable/disable
-   - per-job timeout
-   - per-job concurrency policy
+Each task is a directory under `tasks/`. The only required file is `task.yaml`. A task can also include:
 
-2. **Runner**
+- `prompt.md` for an agent prompt task
+- `run.sh` for a shell task
+- `logs/` for run logs
+- `state.json` for the latest runtime state
 
-   The runner executes an agent command and stores the result.
+## Task Types
 
-   Initial supported command:
+TickClaw supports two task types in the first version.
 
-   ```bash
-   codex exec --json --sandbox workspace-write --cd <workspace> "<prompt>"
-   ```
+### Agent Task
 
-   The runner records:
+A Agent task runs a coding agent with `agent.md` as input.
 
-   - start time and end time
-   - exit code
-   - stdout and stderr
-   - final model message, when available
-   - timeout or failure reason
+```yaml
+# tasks/daily-report/task.yaml
+name: daily-report
+enabled: true
+schedule: "0 9 * * *"
+runner: codex
+type: prompt
+workspace: /home/wenyuan/work/project
+timeout: 3600
+notify: telegram
+concurrency: skip
+created_at: "2026-05-16T10:00:00+02:00"
+updated_at: "2026-05-16T10:00:00+02:00"
 
-3. **Telegram notifier**
+codex:
+  model: gpt-5.5
+  sandbox: workspace-write
+  resume: false
+```
 
-   When a job finishes, TickClaw sends a Telegram message.
+```text
+# tasks/daily-report/prompt.md
+Check the latest experiment results in this repository and summarize what changed.
+```
 
-   The message should include:
+The first Codex command can be:
 
-   - job name
-   - status
-   - duration
-   - short summary
-   - path to local log file
+```bash
+codex exec --json --sandbox workspace-write --cd /home/wenyuan/work/project -
+```
 
-   Configuration should come from environment variables or a local config file:
+TickClaw sends `prompt.md` through stdin.
 
-   ```bash
-   TICKCLAW_TELEGRAM_BOT_TOKEN=...
-   TICKCLAW_TELEGRAM_CHAT_ID=...
-   ```
+### Shell Task
 
-4. **MCP server**
+A shell task runs `run.sh`.
 
-   TickClaw exposes MCP tools so Codex can manage jobs directly.
+```yaml
+# tasks/check-build/task.yaml
+name: check-build
+enabled: true
+schedule: "*/30 * * * *"
+runner: shell
+type: command
+timeout: 1800
+notify: telegram
+concurrency: skip
+created_at: "2026-05-16T10:00:00+02:00"
+updated_at: "2026-05-16T10:00:00+02:00"
+```
 
-   Proposed tools:
+```bash
+# tasks/check-build/run.sh
+#!/usr/bin/env bash
+set -euo pipefail
 
-   - `tickclaw_create_job`
-   - `tickclaw_update_job`
-   - `tickclaw_list_jobs`
-   - `tickclaw_get_job`
-   - `tickclaw_delete_job`
-   - `tickclaw_run_job_now`
-   - `tickclaw_list_runs`
-   - `tickclaw_get_run_log`
-   - `tickclaw_send_telegram`
+python scripts/report.py
+```
+
+## Scheduler Behavior
+
+The TickClaw daemon does only a few things:
+
+1. scan `tasks/*/task.yaml`
+2. validate task schema
+3. decide whether a task is due
+4. lock the task directory before execution
+5. run `prompt.md` or `run.sh` according to `type` and `runner`
+6. write stdout and stderr to `logs/`
+7. update `state.json`
+8. send a Telegram notification when configured
+
+The scheduler does not use Linux `cron`. Cron expressions are parsed inside TickClaw.
+
+The first implementation should use `croniter` plus a simple daemon loop. That is enough for this project and avoids keeping scheduler state in a separate framework.
+
+## State File
+
+`state.json` is the daemon-owned status file for a task.
+
+```json
+{
+  "last_run_at": "2026-05-16T09:00:00+02:00",
+  "last_status": "success",
+  "last_exit_code": 0,
+  "last_log": "logs/2026-05-16T09-00-00.log",
+  "next_run_at": "2026-05-17T09:00:00+02:00",
+  "running": false,
+  "run_count": 12,
+  "failure_count": 0
+}
+```
+
+Codex can read this file to understand what happened. Codex should generally edit `task.yaml`, `prompt.md`, and `run.sh`; TickClaw owns `state.json`, `logs/`, and lock files.
+
+## Telegram Notifications
+
+TickClaw sends a Telegram message after each configured run.
+
+The first message format should include:
+
+- task name
+- status
+- duration
+- exit code
+- short final output or summary
+- local log path
+
+Configuration lives in `~/.tickclaw/config.yaml`:
+
+```yaml
+telegram:
+  bot_token_env: TICKCLAW_TELEGRAM_BOT_TOKEN
+  chat_id_env: TICKCLAW_TELEGRAM_CHAT_ID
+```
 
 ## Future Telegram Interface
 
-Later, TickClaw can run a Telegram bot ingress service.
+Later, TickClaw can run a Telegram ingress service.
 
 Example commands:
 
@@ -117,39 +205,17 @@ The intended behavior is:
 - `/claude` routes to Claude
 - `/gemini` routes to Gemini
 - each model can reuse its own persistent context
-- scheduled jobs and ad-hoc Telegram jobs share the same run database
+- scheduled jobs and ad-hoc Telegram jobs share the same task and log layout
 
 Context reuse should be explicit and inspectable. A future design can decide whether this means:
 
-- `codex exec resume <session-id>`
-- one session per named job
+- one session per named task
 - one session per model
 - one session per Telegram chat
 - one session per project workspace
+- `codex exec resume <session-id>` for Codex tasks
 
-## Suggested Architecture
-
-```text
-Codex
-  |
-  | MCP tools
-  v
-TickClaw MCP server
-  |
-  v
-SQLite database  <---->  Scheduler service
-                         |
-                         v
-                    Agent runner
-                         |
-                         v
-                  codex / claude / gemini
-                         |
-                         v
-                   Telegram notifier
-```
-
-## Proposed Project Layout
+## Project Layout
 
 ```text
 TickClaw/
@@ -159,97 +225,51 @@ TickClaw/
     __init__.py
     cli.py
     config.py
-    db.py
-    models.py
+    daemon.py
+    fs.py
+    schema.py
     scheduler.py
     runner.py
     telegram.py
-    mcp_server.py
-  examples/
-    config.example.toml
-    codex-job.example.toml
-  scripts/
-    install-mcp.sh
-```
-
-Runtime data should live outside the repo:
-
-```text
-~/.tickclaw/
-  config.toml
-  tickclaw.db
-  logs/
+  templates/
+    config.yaml
+    tasks/
+      daily-report/
+        task.yaml
+        prompt.md
+    .gitignore
 ```
 
 ## CLI Sketch
 
+The CLI is for local operation and debugging. It is not the primary management API.
+
 ```bash
 tickclaw init
-tickclaw serve
-tickclaw mcp
+tickclaw daemon
+tickclaw scan
+tickclaw run daily-report
+tickclaw state daily-report
+tickclaw logs daily-report
 tickclaw telegram test
-
-tickclaw job add \
-  --name repo-check \
-  --schedule "*/30 * * * *" \
-  --workspace /home/wenyuan/work/project \
-  --agent codex \
-  --prompt "Check the repository and summarize important issues."
-
-tickclaw job list
-tickclaw job run repo-check
-tickclaw job disable repo-check
-tickclaw runs list repo-check
-tickclaw runs log <run-id>
 ```
 
-## Job Model Draft
+Codex can manage tasks without these commands by editing files directly:
 
-```toml
-name = "repo-check"
-enabled = true
-agent = "codex"
-schedule = "*/30 * * * *"
-workspace = "/home/wenyuan/work/project"
-prompt = "Check the repository and summarize important issues."
-timeout_seconds = 1800
-concurrency_policy = "skip"
-notify_telegram = true
-
-[codex]
-model = "gpt-5.5"
-sandbox = "workspace-write"
-resume = true
-context_key = "repo-check"
+```text
+SSH to my server, create a TickClaw task under ~/.tickclaw/tasks/ that runs every day at 9 AM, and put the task prompt in prompt.md.
 ```
 
-Concurrency policies:
+## Concurrency
 
-- `skip`: if the previous run is still active, skip the new run
+The MVP implements `concurrency: skip`.
+
+If a task is already running when the next scheduled time arrives, TickClaw records a skipped run and leaves the active run alone.
+
+Later options:
+
 - `queue`: run after the previous run finishes
 - `parallel`: allow overlapping runs
-
-The MVP should implement `skip` first.
-
-## Technology Choices
-
-Proposed stack:
-
-- Python
-- `uv` for local development
-- SQLite for state
-- `apscheduler` or a small custom scheduler loop
-- `httpx` for Telegram API calls
-- `typer` for CLI
-- `mcp` Python SDK for MCP server
-
-Open question: use `apscheduler` for reliability and cron parsing, or keep a simpler custom loop plus `croniter`.
-
-My current recommendation:
-
-- use `apscheduler` for the first implementation
-- keep TickClaw's job database as the source of truth
-- rebuild scheduler state from SQLite on service startup
 
 ## Security Defaults
 
@@ -257,33 +277,57 @@ Unattended agent execution needs conservative defaults.
 
 Initial defaults:
 
-- use `--sandbox workspace-write` for Codex jobs
-- require an explicit workspace path
+- require an explicit task directory
+- require an explicit workspace for prompt tasks
+- use `--sandbox workspace-write` for Codex tasks
 - do not default to `danger-full-access`
-- store Telegram token in `~/.tickclaw/config.toml` or env vars, not in job files
+- store Telegram secrets in environment variables
 - redact bot tokens in logs
-- write logs under `~/.tickclaw/logs`
+- write logs under each task's `logs/` directory
 - do not expose a public HTTP server in the MVP
-
-## Open Questions
-
-Before implementation, decide:
-
-1. Should the first scheduler use `apscheduler`, or should TickClaw use a very small hand-written scheduler loop?
-2. Should MCP tools be the primary interface first, or should the CLI be implemented first and MCP wrap the CLI?
-3. Should Codex context reuse be enabled in the MVP, or should the first version always start a fresh `codex exec` session?
-4. For Telegram notifications, should TickClaw send only completion summaries, or include full logs when the output is short?
-5. Should the first version support only Codex, or include placeholder agent adapters for Claude and Gemini from day one?
+- use lock files to prevent duplicate execution
+- validate `task.yaml` before running anything
+- enforce execution timeouts
 
 ## Initial Implementation Plan
 
 1. Create Python package and CLI.
-2. Add config loading from env vars and `~/.tickclaw/config.toml`.
-3. Add SQLite schema for jobs, runs, and model contexts.
-4. Add Telegram send-message tool and CLI test command.
-5. Add Codex runner.
-6. Add scheduler service.
-7. Add MCP server tools.
-8. Add examples and install notes.
-9. Run a smoke test with a harmless local command before running real `codex exec`.
+2. Add `~/.tickclaw/config.yaml` loading.
+3. Add task schema parsing and validation.
+4. Add file-based scheduler with `croniter`.
+5. Add shell runner.
+6. Add Codex prompt runner.
+7. Add task locking, log writing, and `state.json` updates.
+8. Add Telegram notification.
+9. Add examples.
+10. Run a smoke test with a harmless shell task before running real `codex exec`.
 
+
+## SubAgents
+To execute task though codex:
+```json
+"codex-cli": {
+ "command": "/usr/bin/codex",
+ "args": [
+   "exec",
+   "--json",
+   "--color",
+   "never",
+   "--sandbox",
+   "danger-full-access",
+   "-c",
+   "service_tier=\"fast\"",
+   "--skip-git-repo-check"
+ ],
+  "resumeArgs": [
+    "exec",
+    "resume",
+    "{sessionId}",
+    "-c",
+    "sandbox_mode=\"danger-full-access\"",
+    "-c",
+    "service_tier=\"fast\"",
+    "--skip-git-repo-check"
+  ]
+}
+```
