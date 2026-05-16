@@ -142,7 +142,7 @@ Common task fields:
 
 - `name`: task name; should match the task directory when possible.
 - `enabled`: whether the daemon should run this task on schedule.
-- `schedule`: local-time cron expression; five fields are normalized with leading seconds.
+- `schedule`: quoted local-time cron expression; five fields are normalized with leading seconds. Cron expressions in YAML examples and templates must always be quoted because unquoted `*` can be parsed as YAML alias syntax.
 - `type`: `command` or `agent`.
 - `timeout`: maximum run time in seconds.
 
@@ -181,6 +181,15 @@ If a task is already locked because the previous run has not finished, TickClaw 
 
 The scheduler uses local-time cron expressions through the Rust `croner` crate. `croner` is the single source of truth for parsing, next-run calculation, and human-readable English schedule descriptions in CLI and Telegram output. Five-field cron expressions are normalized by prefixing seconds with `0`. Avoid numeric day-of-week fields in templates and demos unless their parser semantics are explicitly tested; interval schedules such as `*/15 * * * *` are clearer for mock tasks.
 
+Missed-run and schedule-change rules:
+
+- TickClaw does not backfill missed scheduled runs.
+- On daemon startup, reconcile each enabled task before due checks. If `next_run_at` is missing, invalid, or already in the past, recompute it as the first future occurrence after startup time.
+- Store the normalized cron expression used to compute `next_run_at` in `state.json` as `schedule_expr`. If the current normalized `task.yaml` schedule differs from `state.schedule_expr`, recompute `next_run_at` as the first future occurrence after now and update `schedule_expr`.
+- Manual `tickclaw task run <task>` updates `last_run_at`, result fields, and counters. It does not consume or shift the scheduled `next_run_at` unless the task was already due when the manual run started.
+- Scheduled task success, failure, timeout, or lock conflict always advances `next_run_at` to the next scheduled occurrence after the attempt.
+- DST behavior follows `croner` and the local timezone. `next_run_at` is stored as an RFC3339 timestamp with offset; TickClaw does not add separate DST compensation or backfill for skipped local times.
+
 ## State File
 
 `state.json` is daemon-owned.
@@ -192,6 +201,7 @@ The scheduler uses local-time cron expressions through the Rust `croner` crate. 
   "last_exit_code": 0,
   "last_log": "logs/2026-05-16T09-00-00.log",
   "session_id": "00000000-0000-0000-0000-000000000000",
+  "schedule_expr": "0 0 9 * * *",
   "next_run_at": "2026-05-17T09:00:00+02:00",
   "running": false,
   "run_count": 12,
@@ -398,7 +408,7 @@ Current implementation should not manage runner sandbox/model flags in `task.yam
 
 Write through unit tests in advance before implementing functionality.
 
-Keep tests under the repository-level `tests/` directory. Do not put unit tests inside `src/*.rs`; implementation code and test code should stay separated for review.
+Prefer repository-level integration tests under `tests/` for user-facing behavior. Small module-level unit tests in `src/*.rs` are allowed for private parsing, validation, formatting, and normalization helpers when integration tests would be awkward.
 
 When developing code, write clear comments for human code review. Each source file should start with a brief file-level comment describing its responsibility. Public structs, enums, and non-trivial functions should have concise comments explaining their purpose, inputs, outputs, side effects, and important failure behavior. Complex control flow should include short inline comments before the logic it explains.
 
