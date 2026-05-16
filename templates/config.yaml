@@ -1,4 +1,84 @@
 telegram:
   bot_token: null
   chat_id: null
-  parse_mode: Markdown
+
+code_agents:
+  gemini-3.1-flash-lite:
+    command: /usr/bin/gemini
+    args:
+      - "--model"
+      - gemini-3.1-flash-lite
+      - "--skip-trust"
+      - "--approval-mode"
+      - yolo
+      - "--output-format"
+      - json
+      - "--prompt"
+      - "{prompt}"
+    resume_args:
+      - "--model"
+      - gemini-3.1-flash-lite
+      - "--skip-trust"
+      - "--approval-mode"
+      - yolo
+      - "--resume"
+      - "{sessionId}"
+      - "--output-format"
+      - json
+      - "--prompt"
+      - "{prompt}"
+
+  gpt-5.3-codex-spark:
+    command: /usr/bin/codex
+    args:
+      - exec
+      - "--json"
+      - "--color"
+      - never
+      - "--sandbox"
+      - danger-full-access
+      - "-m"
+      - gpt-5.3-codex-spark
+      - "-c"
+      - service_tier="fast"
+      - "--skip-git-repo-check"
+      - "-"
+    resume_args:
+      - exec
+      - resume
+      - "{sessionId}"
+      - "-c"
+      - sandbox_mode="danger-full-access"
+      - "-m"
+      - gpt-5.3-codex-spark
+      - "-c"
+      - service_tier="fast"
+      - "--skip-git-repo-check"
+      - "-"
+  gpt-5.5:
+    command: /usr/bin/codex
+    args:
+      - exec
+      - "--json"
+      - "--color"
+      - never
+      - "--sandbox"
+      - danger-full-access
+      - "-m"
+      - gpt-5.5
+      - "-c"
+      - service_tier="fast"
+      - "--skip-git-repo-check"
+      - "-"
+    resume_args:
+      - exec
+      - resume
+      - "{sessionId}"
+      - "-c"
+      - sandbox_mode="danger-full-access"
+      - "-m"
+      - gpt-5.5
+      - "-c"
+      - service_tier="fast"
+      - "--skip-git-repo-check"
+      - "-"

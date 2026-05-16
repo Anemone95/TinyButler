@@ -1,0 +1,5 @@
+name: regular-check
+enabled: true
+schedule: "*/10 * * * *"
+type: command
+timeout: 300

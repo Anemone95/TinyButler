@@ -1,14 +1,21 @@
+//! Per-task lock file management.
+//!
+//! TickClaw uses `create_new` on `.tickclaw.lock` to prevent duplicate task
+//! executions without a central lock service.
+
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+/// Owned task lock that removes the lock file when dropped.
 pub struct TaskLock {
     path: PathBuf,
     _file: File,
 }
 
 impl TaskLock {
+    /// Try to acquire a task lock, returning `None` when another run owns it.
     pub fn acquire(task_dir: &Path) -> Result<Option<Self>> {
         let path = task_dir.join(".tickclaw.lock");
         match OpenOptions::new().write(true).create_new(true).open(&path) {

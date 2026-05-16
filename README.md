@@ -1,364 +1,120 @@
 # TickClaw
 
-TickClaw is a lightweight version of OpenClaw focused on receiving and running scheduled tasks.
+TickClaw is a small file-managed scheduler for shell tasks and coding-agent tasks.
 
 ## Overview
 
-TickClaw lets you manage scheduled tasks on a remote server through local coding agents such as Codex, Claude, or Gemini. Tasks can be simple scripts that write results to the console log, or agent jobs executed by an AI coding agent.
+TickClaw runs scheduled work from task directories under `~/.tickclaw/tasks/`. It does not use Linux `cron`; the daemon parses local-time cron expressions with the Rust `croner` crate. Tasks write logs and state beside their own `task.yaml`, keeping the system easy to inspect over SSH or through a coding agent.
 
-## Usage
+## Install
 
-1. Set up a TickClaw directory on your server and connect it to a Telegram bot.
+Build from source:
 
-2. Add the server as a remote SSH target in your local Codex environment.
+```bash
+make
+```
 
-3. Ask Codex to create, update, list, run, or delete scheduled tasks by editing files under `~/.tickclaw/tasks/`.
+Initialize a TickClaw home:
 
-4. Each task can be either:
-   - a program that writes output to the console log, or
-   - an agent task executed by Codex, Claude, Gemini, or another coding agent.
+```bash
+target/debug/tickclaw init
+```
 
-5. TickClaw runs as a daemon on the server. It scans task directories, executes due tasks, writes logs and state files, and reports completion through Telegram.
+This creates `~/.tickclaw/config.yaml` and example tasks under `~/.tickclaw/tasks/`.
 
-## Planned Features
+Install the release binary and enable the user-level systemd daemon:
 
-- Support claude code, gemini and other code agents.
-- Interact with TickClaw directly through Telegram, similar to OpenClaw. Invoke coding agents from Telegram using commands such as `/codex`, `/claude`, and `/gemini`.
+```bash
+make install
+```
 
+`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs to `~/.cargo/bin/tickclaw`. It also writes `~/.config/systemd/user/tickclaw.service`, runs `systemctl --user enable --now tickclaw.service`, and tries to enable lingering so the service can start at boot. Pass extra Cargo install options through `CARGO_INSTALL_ARGS`:
 
-## Why This Exists
+```bash
+make install CARGO_INSTALL_ARGS='--root ~/.local --force'
+```
 
-Codex/Claude Destop Automations are useful, but linux does have it. Besides, you can not run task though different agents.
-
-## Design
-
-TickClaw should be managed through files, not through MCP or a complex API. This keeps the system small and inspectable: Codex, Claude, Gemini, a human in Vim, or a future Telegram bot can all manage the same tasks because the interface is just files.
-
-## Directory Layout
-
-Runtime data lives in one TickClaw home directory.
+## Runtime Layout
 
 ```text
 ~/.tickclaw/
   config.yaml
-  tickclaw.log
+  telegram_state.json
   tasks/
-    daily-report/
+    smoke-task/
+      data/
       task.yaml
       agent.md
       logs/
-        2026-05-16T09-00-00.log
       state.json
-    check-build/
+    regular-check/
+      data/
       task.yaml
       run.sh
       logs/
       state.json
 ```
 
-Each task is a directory under `tasks/`. The only required file is `task.yaml`. A task can also include:
+`task.yaml`, `agent.md`, and `run.sh` are task-owned. `state.json`, `logs/`, `.tickclaw.lock`, and `~/.tickclaw/telegram_state.json` are daemon-owned. `data/` belongs to the task execution.
 
-- `agent.md` for an agent task
-- `run.sh` for a shell task
-- `logs/` for run logs
-- `state.json` for the latest runtime state
+## Task Files
 
-## Task Types
-
-TickClaw supports two task types in the first version.
-
-### Agent Task
-
-An agent task runs a coding agent with `agent.md` as input.
+Agent task:
 
 ```yaml
-# tasks/daily-report/task.yaml
-name: daily-report
-enabled: true
+name: smoke-task
+enabled: false
 schedule: "0 9 * * *"
-runner: codex
+runner: gpt-5.3-codex-spark
 type: agent
 session: independent
-workspace: /home/wenyuan/work/project
 timeout: 3600
-notify: telegram
-concurrency: skip
-created_at: "2026-05-16T10:00:00+02:00"
-updated_at: "2026-05-16T10:00:00+02:00"
-
-codex:
-  model: gpt-5.5
-  sandbox: workspace-write
 ```
 
-```text
-# tasks/daily-report/agent.md
-Check the latest experiment results in this repository and summarize what changed.
-```
+For agent tasks, `runner` is a key in local `~/.tickclaw/config.yaml` under `code_agents`. The default templates include `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`.
 
-The first Codex command can be:
-
-```bash
-codex exec --json --sandbox workspace-write --cd /home/wenyuan/work/project -
-```
-
-TickClaw sends `agent.md` through stdin.
-
-`session` controls whether an agent task starts from a fresh context or continues the previous context for the same scheduled task:
-
-- `independent`: every run starts a new agent session
-- `reuse`: TickClaw resumes the previous successful session for this task when the runner supports session resume
-
-For Codex, `session: reuse` means TickClaw stores the latest Codex session id in `state.json` and uses `codex exec resume <session-id>` on the next run. If no previous session id exists, the first run starts a new session.
-
-### Shell Task
-
-A shell task runs `run.sh`.
+Shell task:
 
 ```yaml
-# tasks/check-build/task.yaml
-name: check-build
+name: regular-check
 enabled: true
-schedule: "*/30 * * * *"
-runner: shell
+schedule: "*/10 * * * *"
 type: command
 timeout: 1800
-notify: telegram
-concurrency: skip
-created_at: "2026-05-16T10:00:00+02:00"
-updated_at: "2026-05-16T10:00:00+02:00"
 ```
+
+Every task runs inside its own task directory, `~/.tickclaw/tasks/<task-name>/`. Task configs must not define `workspace`, `notify`, or `concurrency`.
+
+## Commands
 
 ```bash
-# tasks/check-build/run.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-python scripts/report.py
+tickclaw init
+tickclaw daemon
+tickclaw check
+tickclaw telegram '<message>'
+tickclaw telegram --photo <path> --caption '<message>'
+tickclaw telegram --document <path> --caption '<message>'
+tickclaw task list
+tickclaw task run <task>
+tickclaw task status <task>
+tickclaw task enable <task>
+tickclaw task disable <task>
 ```
 
-## Scheduler Behavior
+`tickclaw check` validates local config and task definitions. `tickclaw task status <task>` shows task details, current state, and the first 20 lines of the latest log.
 
-The TickClaw daemon does only a few things:
+## Telegram
 
-1. scan `tasks/*/task.yaml`
-2. validate task schema
-3. decide whether a task is due
-4. lock the task directory before execution
-5. run `agent.md` or `run.sh` according to `type` and `runner`
-6. write stdout and stderr to `logs/`
-7. update `state.json`
-8. send a Telegram notification when configured
-
-The scheduler does not use Linux `cron`. Cron expressions are parsed inside TickClaw.
-
-The first implementation should use Rust with a simple daemon loop and the `cron` crate. That is enough for this project and avoids keeping scheduler state in a separate framework.
-
-## State File
-
-`state.json` is the daemon-owned status file for a task.
-
-```json
-{
-  "last_run_at": "2026-05-16T09:00:00+02:00",
-  "last_status": "success",
-  "last_exit_code": 0,
-  "last_log": "logs/2026-05-16T09-00-00.log",
-  "session_id": "00000000-0000-0000-0000-000000000000",
-  "next_run_at": "2026-05-17T09:00:00+02:00",
-  "running": false,
-  "run_count": 12,
-  "failure_count": 0
-}
-```
-
-Codex can read this file to understand what happened. Codex should generally edit `task.yaml`, `agent.md`, and `run.sh`; TickClaw owns `state.json`, `logs/`, and lock files.
-
-## Telegram Notifications
-
-TickClaw sends a Telegram message after each configured run.
-
-The first message format should include:
-
-- task name
-- status
-- duration
-- exit code
-- short final output or summary
-- local log path
-
-Configuration lives in `~/.tickclaw/config.yaml`:
+Telegram secrets live only in `~/.tickclaw/config.yaml`:
 
 ```yaml
 telegram:
   bot_token: "123456789:..."
   chat_id: "123456789"
-  parse_mode: Markdown
 ```
 
-`parse_mode` is passed to Telegram `sendMessage`. The default is `Markdown`, so messages sent through `tickclaw telegram test` can contain Telegram Markdown such as `*bold*`, `_italic_`, and inline code.
+TickClaw uses Telegram Bot HTTP API calls. `tickclaw telegram '<message>'`, media captions, and compact daemon-generated summaries use MarkdownV2. TickClaw sanitizes CLI-authored Telegram messages before sending; still escape dynamic content deliberately when composing MarkdownV2. Send arbitrary logs and large text as documents. Agent tasks may call `tickclaw telegram ...` themselves when they want to notify. The daemon sends fallback notifications for failures, and shell tasks notify when stdout is non-empty or when the task fails. The daemon stores Telegram long-polling offset state in `~/.tickclaw/telegram_state.json`.
 
-## Future Telegram Interface
+## Development
 
-Later, TickClaw can run a Telegram ingress service.
-
-Example commands:
-
-```text
-/codex check the current repo and summarize risky changes
-/claude refactor this function
-/gemini summarize this document
-```
-
-The intended behavior is:
-
-- `/codex` routes to Codex
-- `/claude` routes to Claude
-- `/gemini` routes to Gemini
-- each model can reuse its own persistent context
-- scheduled jobs and ad-hoc Telegram jobs share the same task and log layout
-
-Context reuse should be explicit and inspectable. A future design can decide whether this means:
-
-- one session per named task
-- one session per model
-- one session per Telegram chat
-- one session per project workspace
-- `codex exec resume <session-id>` for Codex tasks
-
-## Project Layout
-
-```text
-TickClaw/
-  README.md
-  Cargo.toml
-  src/
-    main.rs
-    config.rs
-    task.rs
-    scheduler.rs
-    runner.rs
-    telegram.rs
-    state.rs
-    lock.rs
-  templates/
-    config.yaml
-    tasks/
-      daily-report/
-        task.yaml
-        agent.md
-    .gitignore
-```
-
-## CLI Sketch
-
-The CLI is for local operation and debugging. It is not the primary management API.
-
-```bash
-tickclaw init
-tickclaw daemon
-tickclaw scan
-tickclaw run daily-report
-tickclaw state daily-report
-tickclaw logs daily-report
-tickclaw telegram test
-```
-
-Build and run locally:
-
-```bash
-cargo build
-target/debug/tickclaw init
-target/debug/tickclaw scan
-target/debug/tickclaw run daily-report
-```
-
-Codex can manage tasks without these commands by editing files directly:
-
-```text
-SSH to my server, create a TickClaw agent task under ~/.tickclaw/tasks/ that runs every day at 9 AM, and put the agent instructions in agent.md.
-```
-
-## Concurrency
-
-The MVP implements `concurrency: skip`.
-
-If a task is already running when the next scheduled time arrives, TickClaw records a skipped run and leaves the active run alone.
-
-Later options:
-
-- `queue`: run after the previous run finishes
-- `parallel`: allow overlapping runs
-
-## Security Defaults
-
-Unattended agent execution needs conservative defaults.
-
-Initial defaults:
-
-- require an explicit task directory
-- require an explicit workspace for agent tasks
-- use `--sandbox workspace-write` for Codex tasks
-- do not default to `danger-full-access`
-- store Telegram secrets only in local `~/.tickclaw/config.yaml`
-- redact bot tokens in logs
-- write logs under each task's `logs/` directory
-- do not expose a public HTTP server in the MVP
-- use lock files to prevent duplicate execution
-- validate `task.yaml` before running anything
-- enforce execution timeouts
-
-## Implementation Status
-
-Implemented:
-
-- Rust CLI and daemon
-- `~/.tickclaw/config.yaml` loading
-- `task.yaml` parsing and validation
-- file-based scheduler with local-time cron expressions
-- shell task runner
-- Codex agent runner
-- `session: independent | reuse` for Codex agent tasks
-- task lock files
-- per-run logs
-- `state.json` updates
-- Telegram completion notifications
-- templates and `init`
-
-Still planned:
-
-- Telegram ingress commands
-- Claude and Gemini runners
-- richer context/session policies
-- log rotation
-- queue and parallel concurrency policies
-
-
-## SubAgents
-To execute task though codex:
-```json
-"codex-cli": {
- "command": "/usr/bin/codex",
- "args": [
-   "exec",
-   "--json",
-   "--color",
-   "never",
-   "--sandbox",
-   "danger-full-access",
-   "-c",
-   "service_tier=\"fast\"",
-   "--skip-git-repo-check"
- ],
-  "resumeArgs": [
-    "exec",
-    "resume",
-    "{sessionId}",
-    "-c",
-    "sandbox_mode=\"danger-full-access\"",
-    "-c",
-    "service_tier=\"fast\"",
-    "--skip-git-repo-check"
-  ]
-}
-```
+Internal design and implementation rules live in `AGENTS.md`. Keep README user-facing and update it from AGENTS when behavior changes.

@@ -11,7 +11,7 @@ TickClaw is a file-managed scheduler for agent tasks. It should stay small, insp
 Core principles:
 
 - Tasks are files under `~/.tickclaw/tasks/`.
-- TickClaw does not use Linux `cron`; it uses its own daemon loop with local-time cron expressions parsed by the Rust `cron` crate.
+- TickClaw does not use Linux `cron`; it uses its own daemon loop with local-time cron expressions parsed by the Rust `croner` crate.
 - TickClaw does not require MCP for task management.
 - The CLI is the primary command surface.
 - Telegram commands must map to most of local CLI commands.
@@ -56,7 +56,7 @@ TickClaw/
   README.md      # user-facing usage and project overview
   AGENTS.md      # internal development guide for code agents
   Cargo.toml     # Rust package metadata and dependencies
-  skills/        # project configuration skills and workflows written in one format usable by Codex, Claude, and Gemini
+  skills/        # installed-TickClaw operation/configuration skills usable by Codex, Claude, and Gemini
   src/           # TickClaw Rust source code
     main.rs      # CLI parsing and top-level command dispatch
     config.rs    # TickClaw home directory and config loading/init
@@ -274,9 +274,9 @@ telegram:
 
 Do not put real Telegram tokens or chat ids in the repository, examples, or README.
 
-Telegram parse mode is `MarkdownV2` for compact TickClaw-generated summaries only and is not user-configurable. All task names, paths, stdout, stderr, log previews, task prompts, scripts, captions, and other user-controlled content must be MarkdownV2-escaped before sending. Use one shared escaping helper for all Telegram messages; `teloxide::utils::markdown` is the preferred mature Rust helper set when the dependency is acceptable. If converting full Markdown documents to Telegram MarkdownV2 is needed, use a dedicated converter such as `telegram_markdown_v2` instead of ad hoc string rewriting.
+Telegram parse mode is `MarkdownV2` for compact TickClaw-generated summaries and for `tickclaw telegram` text messages and media captions; it is not user-configurable. All task names, paths, stdout, stderr, log previews, task prompts, scripts, captions, and other user-controlled content must be MarkdownV2-escaped before sending. CLI-authored Telegram messages and captions must be sanitized before the API request so ordinary text does not fail Telegram parsing; preserve simple MarkdownV2 formatting such as bold and inline code when possible. Use one shared escaping helper for daemon-generated Telegram messages; `teloxide::utils::markdown` is the preferred mature Rust helper set when the dependency is acceptable. If converting full Markdown documents to Telegram MarkdownV2 is needed, use a dedicated converter such as `telegram_markdown_v2` instead of ad hoc string rewriting.
 
-Large or arbitrary text blocks should be sent as documents, or sent without `parse_mode` when no TickClaw-generated formatting is required. Safely escaped code blocks are acceptable only for short previews.
+Large or arbitrary text blocks should be sent as documents instead of Telegram Markdown messages. Safely escaped code blocks are acceptable only for short previews.
 
 Telegram sender should avoid leaking bot tokens in errors. If using reqwest errors, strip URLs before returning or logging errors.
 
@@ -414,7 +414,7 @@ When developing code, write clear comments for human code review. Each source fi
 
 All project decisions, requirements, and implementation rules agreed in agent conversations must be written back to `AGENTS.md` before implementation continues. This rule itself must remain in `AGENTS.md` so future agent sessions inherit it.
 
-Update `skills/` and `README.md` according to the latest AGENTS.md.
+Update `skills/` and `README.md` according to the latest AGENTS.md. Project skills are for operating and configuring an installed TickClaw instance, not for developing TickClaw itself. They must be self-contained guides for code agents that may not have access to TickClaw's Rust source, and should explain how to use the installed `tickclaw` CLI, configure `~/.tickclaw/config.yaml`, create task directories, manage `task.yaml`, and send Telegram messages.
 
 Use `make syncdoc` when only `AGENTS.md` should be committed and pushed. The target runs `git add AGENTS.md`, `git commit -m "sync"`, and `git push`.
 
