@@ -45,6 +45,8 @@ tickclaw telegram --document <path>          # send a Telegram document; accepts
 tickclaw task list                           # list all tasks and their latest status
 tickclaw task run <task>                     # run one task immediately through the task-management command surface
 tickclaw task status <task>                  # show task details, latest state, and a log preview
+tickclaw task enable <task>                  # set enabled: true in the task.yaml file
+tickclaw task disable <task>                 # set enabled: false in the task.yaml file
 ```
 
 ## Repository Layout
@@ -54,7 +56,7 @@ TickClaw/
   README.md      # user-facing usage and project overview
   AGENTS.md      # internal development guide for code agents
   Cargo.toml     # Rust package metadata and dependencies
-  skills/        # project configurations skills and workflows for code agents
+  skills/        # project configuration skills and workflows written in one format usable by Codex, Claude, and Gemini
   src/           # TickClaw Rust source code
     main.rs      # CLI parsing and top-level command dispatch
     config.rs    # TickClaw home directory and config loading/init
@@ -116,14 +118,10 @@ Agent task:
 name: smoke-task # task name; should match the task directory when possible
 enabled: false # agent tasks should be opt-in or low-frequency unless cost is intentional
 schedule: "0 9 * * *" # local-time cron expression; five fields are normalized with leading seconds
-runner: codex # execution backend; codex for agent tasks
+runner: gpt-5.3-codex-spark # code_agents key used to run this agent task
 type: agent # task kind; agent tasks read agent.md as prompt
 session: independent # independent starts fresh; reuse resumes the previous supported session
 timeout: 3600 # maximum run time in seconds
-
-codex: # Codex-specific runner options
-  model: gpt-5.5 # Codex model used for this task
-  sandbox: workspace-write # Codex sandbox mode; default should stay workspace-write
 ```
 
 Shell task:
@@ -132,19 +130,28 @@ Shell task:
 name: regular-check # task name; should match the task directory when possible
 enabled: true # whether the daemon should run this task on schedule
 schedule: "*/10 * * * *" # local-time cron expression; cheap shell check every 10 minutes here
-runner: shell # execution backend; shell runs run.sh with bash
 type: command # task kind; command tasks execute run.sh
 timeout: 1800 # maximum run time in seconds
 ```
 
-Every task runs inside its own task directory, `~/.tickclaw/tasks/<task-name>/`. Task configs must not define `workspace`, `notify`, or `concurrency`; those behaviors are fixed by the scheduler.
+Every task runs inside its own task directory, `~/.tickclaw/tasks/<task-name>/`.
 
-`session` for agent tasks:
+Common task fields:
 
-- `independent`: every run starts a new agent session.
-- `reuse`: TickClaw resumes the previous successful session for this task when the runner supports session resume.
+- `name`: task name; should match the task directory when possible.
+- `enabled`: whether the daemon should run this task on schedule.
+- `schedule`: local-time cron expression; five fields are normalized with leading seconds.
+- `type`: `command` or `agent`.
+- `timeout`: maximum run time in seconds.
 
-For Codex, `session: reuse` stores the latest Codex session id in `state.json` and uses `codex exec resume <session-id>` on the next run. If no previous session id exists, the first run starts a new session.
+Command tasks use `type: command` and execute `run.sh` through shell.
+
+Agent tasks use `type: agent`, read `agent.md` as the prompt, and require two extra fields:
+
+- `runner`: a string key under `code_agents.<runner>` in `~/.tickclaw/config.yaml`, such as `gpt-5.3-codex-spark`, `gpt-5.5`, or `gemini-3.1-flash-lite`.
+- `session`: agent session mode. `independent` starts a new agent session for every run. `reuse` resumes the previous successful session when the configured runner supports session resume.
+
+For agent runners, `session: reuse` stores the latest session id in `state.json` and uses the configured `resume_args` on the next run. If no previous session id exists, the first run starts a new session with `args`.
 
 ## Scheduler Rules
 
@@ -160,8 +167,6 @@ The daemon should:
 8. update `state.json`
 9. send Telegram notification according to the task type and result rules below
 
-The task directory is always the working directory.
-
 Telegram notification rules:
 
 - Agent task success: the daemon does not auto-notify. The agent may call `tickclaw telegram ...` itself when a notification is useful.
@@ -172,7 +177,7 @@ Telegram notification rules:
 
 If a task is already locked because the previous run has not finished, TickClaw should report that execution attempt as `Run Failure` instead of queuing, skipping by policy, or running in parallel.
 
-The scheduler uses local-time cron expressions through the Rust `cron` crate. Five-field cron expressions are normalized by prefixing seconds with `0`.
+The scheduler uses local-time cron expressions through the Rust `croner` crate. `croner` is the single source of truth for parsing, next-run calculation, and human-readable English schedule descriptions in CLI and Telegram output. Five-field cron expressions are normalized by prefixing seconds with `0`. Avoid numeric day-of-week fields in templates and demos unless their parser semantics are explicitly tested; interval schedules such as `*/15 * * * *` are clearer for mock tasks.
 
 ## State File
 
@@ -200,37 +205,50 @@ Current planned mapping:
 
 | Local CLI | Telegram | Meaning |
 | --- | --- | --- |
-| `tickclaw task list` | `/task-list` | List all tasks and their latest status |
-| `tickclaw task run <name>` | `/task-run <name>` | Run one task immediately |
-| `tickclaw task status <name>` | `/task-status <name>` | Show task details, recent state, and the first 20 lines of the latest log |
+| `tickclaw task list` | `/task_list` | List all tasks and their latest status |
+| `tickclaw task run <name>` | `/task_run <name>` | Run one task immediately |
+| `tickclaw task status <name>` | `/task_status <name>` | Show task details, recent state, and the first 20 lines of the latest log |
+| `tickclaw task enable <name>` | `/task_enable <name>` | Enable a task by setting `enabled: true` |
+| `tickclaw task disable <name>` | `/task_disable <name>` | Disable a task by setting `enabled: false` |
 
 Do not add Telegram-only behavior. If a Telegram feature cannot be explained as a local CLI command first, add the CLI command before adding the Telegram command.
 
+Telegram bot menu commands must use lowercase letters, digits, and underscores only. Use underscore command names such as `/task_list`; do not use hyphenated command names such as `/task-list`.
+`tickclaw daemon` starts the MVP Telegram long-polling ingress loop automatically when `telegram.bot_token` and `telegram.chat_id` are configured. There is no separate `tickclaw telegram --poll` public command. The robot handles `/help`, `/task_list`, `/task_status <task>`, `/task_run <task>`, `/task_enable <task>`, and `/task_disable <task>` for the configured `telegram.chat_id` only. It must not respond to bare text aliases such as `tasklist`; users should use slash commands.
+
 ## Telegram Task Management Design
 
-`tickclaw task list` and `/task-list` should show:
+`tickclaw task list` and `/task_list` should show:
 
 - task name
 - enabled or disabled
 - task type and runner
 - schedule
+- human-readable English schedule description generated through `croner`
 - last status
 - last run time
 - next run time
 - run count and failure count
 - whether the task is currently running
 
-`tickclaw task status <name>` and `/task-status <name>` should show:
+`task list` output must be readable when forwarded to Telegram. Do not print one long line per task; format each task as a compact multi-line block with stable line breaks.
+
+`tickclaw task status <name>` and `/task_status <name>` should show:
 
 - task details from `task.yaml`
+- human-readable English schedule description generated through `croner`
+- for agent tasks: the `agent.md` prompt content
+- for shell tasks: the `run.sh` script content
 - latest state from `state.json`
 - first 20 lines of the latest log, when a latest log exists
 
 First implementation can be text-only. Inline buttons can be added later:
 
-- `Refresh` -> `/task-list`
-- `Status <task>` -> `/task-status <task>`
-- `Run <task>` -> `/task-run <task>`
+- `List` -> `/task_list`
+- `Status <task>` -> `/task_status <task>`
+- `Run <task>` -> `/task_run <task>`
+- `Enable <task>` -> `/task_enable <task>`
+- `Disable <task>` -> `/task_disable <task>`
 
 ## config.yaml Config
 
@@ -250,37 +268,17 @@ Telegram sender should avoid leaking bot tokens in errors. If using reqwest erro
 
 For outbound-only Telegram messages, photos, and documents, TickClaw should use direct Telegram Bot HTTP API calls or a lightweight wrapper. Do not add a full bot framework for outbound-only sending.
 
-For Telegram ingress, polling, slash commands, inline buttons, callback queries, dialogue state, or richer bot workflows, prefer `teloxide`. It is the default mature Rust Telegram bot framework choice for future ingress work.
+For the MVP Telegram ingress loop, direct Telegram Bot API long polling is acceptable because it only routes a few local CLI-equivalent commands. For richer polling, webhook, inline buttons, callback queries, dialogue state, or larger bot workflows, prefer `teloxide`.
 
 2. Config code agents:
 
 ```yaml
 code_agents:
-  codex:
-    command: /usr/bin/codex
-    args:
-      - exec
-      - "--json"
-      - "--color"
-      - never
-      - "--sandbox"
-      - workspace-write
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-    resume_args:
-      - exec
-      - resume
-      - "{sessionId}"
-      - "-c"
-      - sandbox_mode="workspace-write"
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-
-  google-gemini-cli:
+  gemini-3.1-flash-lite:
     command: /usr/bin/gemini
     args:
+      - "--model"
+      - gemini-3.1-flash-lite
       - "--skip-trust"
       - "--approval-mode"
       - yolo
@@ -289,6 +287,8 @@ code_agents:
       - "--prompt"
       - "{prompt}"
     resume_args:
+      - "--model"
+      - gemini-3.1-flash-lite
       - "--skip-trust"
       - "--approval-mode"
       - yolo
@@ -298,20 +298,76 @@ code_agents:
       - json
       - "--prompt"
       - "{prompt}"
+
+  gpt-5.3-codex-spark:
+    command: /usr/bin/codex
+    args:
+      - exec
+      - "--json"
+      - "--color"
+      - never
+      - "--sandbox"
+      - "danger-full-access"
+      - "-m"
+      - gpt-5.3-codex-spark
+      - "-c"
+      - service_tier="fast"
+      - "--skip-git-repo-check"
+      - "-"
+    resume_args:
+      - exec
+      - resume
+      - "{sessionId}"
+      - "-c"
+      - sandbox_mode="danger-full-access"
+      - "-m"
+      - gpt-5.3-codex-spark
+      - "-c"
+      - service_tier="fast"
+      - "--skip-git-repo-check"
+      - "-"
+  gpt-5.5:
+    command: /usr/bin/codex
+    args:
+      - exec
+      - "--json"
+      - "--color"
+      - never
+      - "--sandbox"
+      - "danger-full-access"
+      - "-m"
+      - gpt-5.5
+      - "-c"
+      - service_tier="fast"
+      - "--skip-git-repo-check"
+      - "-"
+    resume_args:
+      - exec
+      - resume
+      - "{sessionId}"
+      - "-c"
+      - sandbox_mode="danger-full-access"
+      - "-m"
+      - gpt-5.5
+      - "-c"
+      - service_tier="fast"
+      - "--skip-git-repo-check"
+      - "-"
 ```
 
 `{prompt}` is replaced with the task prompt when a runner needs prompt-in-args. `{sessionId}` is replaced with the previous successful session id for `session: reuse`.
 
-## Security Defaults
+## Runtime Defaults
 
 - Require an explicit task directory.
 - Run every task from its own task directory.
 - Task configs must not define `workspace`, `notify`, or `concurrency`.
-- Use `--sandbox workspace-write` for Codex tasks by default.
-- Do not default to `danger-full-access`.
+- Task configs must not define Codex sandbox/model fields; runner flags are controlled only by `code_agents` command args in local config.
+- TickClaw does not manage sandbox policy itself. The default Codex templates use `danger-full-access`, and users can change runner flags only through local `code_agents` config.
 - Store Telegram secrets only in local `~/.tickclaw/config.yaml`.
 - Redact bot tokens in logs.
 - Write logs under each task's `logs/` directory.
+- Keep task logs for six months. Compress completed monthly log sets into `.tgz` archives under the same task `logs/` directory.
 - Do not expose a public HTTP server in the MVP.
 - Use lock files to prevent duplicate execution.
 - Validate `task.yaml` before running anything.
@@ -319,15 +375,30 @@ code_agents:
 
 ## Code Agent Runner Notes
 
-Current implementation should prefer `workspace-write`; treat `danger-full-access` and Gemini `--approval-mode yolo` as explicit advanced configurations.
+Current implementation should not manage runner sandbox/model flags in `task.yaml`. Code-agent command lines are assembled from local `code_agents.<runner>.command`, `args`, and `resume_args`; users own those arguments. Template runner keys are `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`. TickClaw templates use Codex `danger-full-access` and Gemini `--approval-mode yolo`.
 
 ## Development Checks
 
-Write through unit tests in advance before impelemnting functionality. 
+Write through unit tests in advance before implementing functionality.
+
+Keep tests under the repository-level `tests/` directory. Do not put unit tests inside `src/*.rs`; implementation code and test code should stay separated for review.
+
+When developing code, write clear comments for human code review. Each source file should start with a brief file-level comment describing its responsibility. Public structs, enums, and non-trivial functions should have concise comments explaining their purpose, inputs, outputs, side effects, and important failure behavior. Complex control flow should include short inline comments before the logic it explains.
 
 All project decisions, requirements, and implementation rules agreed in agent conversations must be written back to `AGENTS.md` before implementation continues. This rule itself must remain in `AGENTS.md` so future agent sessions inherit it.
 
 Update `skills/` and `README.md` according to the latest AGENTS.md.
+
+Use `make syncdoc` when only `AGENTS.md` should be committed and pushed. The target runs `git add AGENTS.md`, `git commit -m "sync"`, and `git push`.
+
+Makefile targets:
+
+- `make`: build the debug binary with `cargo build`.
+- `make verify`: run `cargo fmt`, `cargo check`, `cargo test`, and `cargo clippy -- -D warnings`.
+- `make install`: run `cargo install --path . $(CARGO_INSTALL_ARGS)`, write `~/.config/systemd/user/tickclaw.service`, run `systemctl --user enable --now tickclaw.service`, and try `loginctl enable-linger "$USER"` so the user service can start at boot. `CARGO_INSTALL_ARGS` defaults to `--force`; pass Cargo install options through it, for example `make install CARGO_INSTALL_ARGS='--root ~/.local --force'`.
+- `make uninstall`: stop and disable the user service, remove the service file, and remove the installed binary.
+- `make service-status`: show the user service status.
+
 Before committing Rust code changes, run:
 
 ```bash
@@ -353,14 +424,17 @@ The smoke test should use the public task-management command surface. Do not use
 
 ## Planned Work
 
-- [ ] Add skills according agents.md.
-- [ ] Implement `tickclaw check`.
-- [ ] Align task schema and scheduler rules with this document.
-- [ ] Implement `tickclaw daemon`.
-- [ ] Implement `tickclaw task list`.
-- [ ] Implement `tickclaw task run <name>`.
-- [ ] Implement `tickclaw task status <name>`.
-- [ ] Add Telegram polling/ingress.
-- [ ] Map `/task-list`, `/task-run`, and `/task-status` to CLI handlers.
-- [ ] Add Claude and Gemini runners.
-- [ ] Add log rotation.
+- [x] Add skills according agents.md.
+- [x] Implement `tickclaw check`.
+- [x] Align task schema and scheduler rules with this document.
+- [x] Implement `tickclaw daemon`.
+- [x] Implement `tickclaw task list`.
+- [x] Implement `tickclaw task run <name>`.
+- [x] Implement `tickclaw task status <name>`.
+- [x] Implement `tickclaw task enable <name>`.
+- [x] Implement `tickclaw task disable <name>`.
+- [x] Add Telegram polling/ingress.
+- [x] Map `/task_list`, `/task_run`, `/task_status`, `/task_enable`, and `/task_disable` to CLI handlers.
+- [x] Add Gemini runner.
+- [ ] Add Claude runner.
+- [ ] Add six-month task log retention and monthly `.tgz` log archives.
