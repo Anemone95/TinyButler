@@ -38,7 +38,9 @@ TickClaw daemon/Codex/Claude/Telegram bridged(Codex/Claude/...)
 tickclaw init                                # create the TickClaw configuration directory (~/.tickclaw), including config file, and example tasks
 tickclaw daemon                              # start the scheduler loop and run due tasks
 tickclaw check                               # validate all TickClaw-controlled files under ~/.tickclaw, including config.yaml and task.yaml files
-tickclaw telegram test --message '<message>' # send a test Telegram message using local config
+tickclaw telegram '<message>'                # send a Telegram text message using local config
+tickclaw telegram --photo <path>             # send a Telegram photo; accepts optional --caption '<message>'
+tickclaw telegram --document <path>          # send a Telegram document; accepts optional --caption '<message>'
 
 tickclaw task list                           # list all tasks and their latest status
 tickclaw task run <task>                     # run one task immediately through the task-management command surface
@@ -246,6 +248,10 @@ Telegram parse mode is always Markdown and is not user-configurable.
 
 Telegram sender should avoid leaking bot tokens in errors. If using reqwest errors, strip URLs before returning or logging errors.
 
+For outbound-only Telegram messages, photos, and documents, TickClaw should use direct Telegram Bot HTTP API calls or a lightweight wrapper. Do not add a full bot framework for outbound-only sending.
+
+For Telegram ingress, polling, slash commands, inline buttons, callback queries, dialogue state, or richer bot workflows, prefer `teloxide`. It is the default mature Rust Telegram bot framework choice for future ingress work.
+
 2. Config code agents:
 
 ```yaml
@@ -319,6 +325,8 @@ Current implementation should prefer `workspace-write`; treat `danger-full-acces
 
 Write through unit tests in advance before impelemnting functionality. 
 
+All project decisions, requirements, and implementation rules agreed in agent conversations must be written back to `AGENTS.md` before implementation continues. This rule itself must remain in `AGENTS.md` so future agent sessions inherit it.
+
 Update `skills/` and `README.md` according to the latest AGENTS.md.
 Before committing Rust code changes, run:
 
@@ -342,8 +350,6 @@ rm -rf /home/wenyuan/TickClaw/.tickclaw-test
 ```
 
 The smoke test should use the public task-management command surface. Do not use the old low-level `run`, `state`, or `logs` commands for documented behavior checks.
-
-Any other develop requirement ask in cli should write down in this document!
 
 ## Planned Work
 
