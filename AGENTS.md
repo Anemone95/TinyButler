@@ -66,7 +66,7 @@ TickClaw/
     telegram.rs  # Telegram message sender and run notifications
     state.rs     # per-task state.json model and persistence
     lock.rs      # per-task lock file acquisition and cleanup
-  templates/     # files copied or mirrored into initialized TickClaw configurations, see configuration layout for details
+  templates/     # files copied into initialized TickClaw configurations by `tickclaw init`
     config.yaml  # example local config without secrets
     tasks/       # example task directories
 ```
@@ -299,90 +299,9 @@ If a Telegram webhook is configured for the bot, `getUpdates` long polling will 
 
 2. Config code agents:
 
-```yaml
-code_agents:
-  gemini-3.1-flash-lite:
-    command: /usr/bin/gemini
-    args:
-      - "--model"
-      - gemini-3.1-flash-lite
-      - "--skip-trust"
-      - "--approval-mode"
-      - yolo
-      - "--output-format"
-      - json
-      - "--prompt"
-      - "{prompt}"
-    resume_args:
-      - "--model"
-      - gemini-3.1-flash-lite
-      - "--skip-trust"
-      - "--approval-mode"
-      - yolo
-      - "--resume"
-      - "{sessionId}"
-      - "--output-format"
-      - json
-      - "--prompt"
-      - "{prompt}"
+See `templates/config.yaml` `[code_agents]`.
 
-  gpt-5.3-codex-spark:
-    command: /usr/bin/codex
-    args:
-      - exec
-      - "--json"
-      - "--color"
-      - never
-      - "--sandbox"
-      - "danger-full-access"
-      - "-m"
-      - gpt-5.3-codex-spark
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-    resume_args:
-      - exec
-      - resume
-      - "{sessionId}"
-      - "-c"
-      - sandbox_mode="danger-full-access"
-      - "-m"
-      - gpt-5.3-codex-spark
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-  gpt-5.5:
-    command: /usr/bin/codex
-    args:
-      - exec
-      - "--json"
-      - "--color"
-      - never
-      - "--sandbox"
-      - "danger-full-access"
-      - "-m"
-      - gpt-5.5
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-    resume_args:
-      - exec
-      - resume
-      - "{sessionId}"
-      - "-c"
-      - sandbox_mode="danger-full-access"
-      - "-m"
-      - gpt-5.5
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-```
-
-`{prompt}` is replaced with the task prompt when a runner needs prompt-in-args. `{sessionId}` is replaced with the previous successful session id for `session: reuse`.
+`{prompt}` is replaced with the task prompt when a runner needs prompt-in-args. `{sessionId}` is replaced with the previous successful session id for `session: reuse`. `stream_args` is used only by interactive chat bridge runners and should include the complete streaming invocation flags for that runner, including model, sandbox or approval policy, and streaming output mode when the CLI requires them.
 
 ## Runtime Defaults
 
@@ -402,7 +321,7 @@ code_agents:
 
 ## Code Agent Runner Notes
 
-Current implementation should not manage runner sandbox/model flags in `task.yaml`. Code-agent command lines are assembled from local `code_agents.<runner>.command`, `args`, and `resume_args`; users own those arguments. Template runner keys are `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`. TickClaw templates use Codex `danger-full-access` and Gemini `--approval-mode yolo`.
+Current implementation should not manage runner sandbox/model flags in `task.yaml`. Code-agent command lines are assembled from local `code_agents.<runner>.command`, `args`, `resume_args`, and optional `stream_args`; users own those arguments. Template runner keys are `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`. TickClaw templates use Codex `danger-full-access` and Gemini `--approval-mode yolo`.
 
 ## Development Checks
 
@@ -449,6 +368,108 @@ rm -rf /home/wenyuan/TickClaw/.tickclaw-test
 
 The smoke test should use the public task-management command surface. Do not use the old low-level `run`, `state`, or `logs` commands for documented behavior checks.
 
+## Chat Bridge
+
+Goal: TickClaw should support an interactive Telegram chat bridge that lets the configured Telegram chat talk directly to a long-lived code-agent session, such as Codex or Gemini, from the main Telegram conversation.
+
+This feature must still follow the command mapping rule: add the local CLI chat experience first, then expose Telegram slash commands as equivalent behavior. Planned local command shape:
+
+```bash
+tickclaw chat new                 # enter an interactive chat REPL; select a model, then send user input and stream model replies until /exit
+tickclaw chat session             # list previous chat sessions and resume one in the interactive chat REPL
+```
+
+Planned Telegram mapping:
+
+| Local CLI | Telegram | Meaning |
+| --- | --- | --- |
+| `tickclaw chat new` | `/new` | Show a model menu for runners that support interactive streaming, then create a new session after selection |
+| `tickclaw chat session` | `/session` | Show previous chat sessions and resume the selected session |
+| Ctrl+C inside chat REPL | `/abort` | Immediately interrupt the active code-agent turn, equivalent to local Ctrl+C |
+
+`tickclaw chat new` starts a REPL-like interface. It first lets the user choose one streaming-capable model, then each subsequent user line is redirected to that code-agent session and the model response is streamed back. `tickclaw chat session` lists previous chat sessions with runner, session id or thread id, last activity, and a short title or latest user message when available; after selection, it resumes that session in the same REPL interface. The local REPL exits on `/exit`. `/exit` detaches from the chat session without aborting or deleting it. Ctrl+C inside the REPL must immediately abort the active code-agent turn, equivalent to Telegram `/abort`. Do not add separate local `chat send`, `chat status`, or `chat close` commands for the MVP.
+
+`/new` should return an inline menu containing only configured `code_agents` entries that support streaming chat. A runner supports streaming chat when it has `stream_args` or a dedicated Rust stream adapter. Selecting a model starts a fresh Telegram chat bridge session. `/session` should return an inline menu of previous chat sessions and resume the selected session as the active Telegram chat bridge session. After a session is active, non-command Telegram text in the authorized main chat is redirected to that session instead of being ignored. Bare text remains ignored when no active chat bridge session exists. Telegram `/abort` must immediately terminate the active code-agent turn, matching local Ctrl+C. Telegram does not need an explicit exit command for the MVP; the active session remains until replaced by `/new` or `/session`, daemon restart recovery, or invalid session detection.
+
+Extend `code_agents.<runner>` with optional `stream_args` for interactive Telegram sessions. `args` and `resume_args` remain for scheduled agent tasks; `stream_args` is for the long-lived chat bridge runtime and may use different flags, output format, or app-server mode. Template `stream_args` must be complete enough to start the streaming runner without inheriting model, sandbox, approval, or output-format settings from `args`.
+
+See `templates/config.yaml` `[code_agents]` for concrete `stream_args` examples.
+
+Interactive chat behavior:
+
+- Telegram ingress must accept chat messages only from the configured `telegram.chat_id`.
+- When a redirected user message is accepted, TickClaw should acknowledge the Telegram message with a check mark reaction when Telegram supports reactions; if reactions fail, continue without failing the turn.
+- While the code agent is running, TickClaw should keep sending Telegram `typing` chat actions until the turn completes.
+- Code-agent output should be streamed back to Telegram. Prefer throttled message edits for growing assistant text and separate messages for notable tool output or errors. Avoid one Telegram API call per token.
+- If message edits fail, fall back to sending a new escaped message. If output exceeds Telegram message limits, send chunks or a document. On adapter error, timeout, or nonzero exit, clear busy state, persist the error, and send a concise failure message.
+- Escape all Telegram MarkdownV2 text before sending. Large or arbitrary output must be chunked or sent as a document instead of one oversized Markdown message.
+- If a session is already busy, the MVP should reject a second user message with a clear busy response instead of queuing multiple turns. `/abort` must remain available while busy and must stop the current code-agent process or turn promptly.
+- `/abort` and local Ctrl+C cancel only the in-flight user turn and child process or request. They do not delete or close the session. After abort completes, the session returns to `active_idle` if the adapter confirms it is still resumable; otherwise TickClaw moves to `inactive` and persists the error.
+- Store chat bridge runtime state separately from task `state.json`, for example under `~/.tickclaw/chat_state.json`. This state is runtime-owned and should include active runner, known sessions, session id or thread id, busy state, last activity, current process or request id, last error, and enough metadata to resume or detach safely.
+- Write `chat_state.json` atomically through a temp-file rename under a chat lock. Store metadata only: active runner, session ids, state, timestamps, current process or request id, last error, and session summaries. Do not store full transcripts unless explicitly added later.
+- Use a chat-state lock file, for example `~/.tickclaw/chat.lock`, to serialize all chat bridge mutations across daemon and local CLI processes. Only one active turn may exist per TickClaw home. A competing local REPL, Telegram turn, or second daemon instance must receive a busy or locked response.
+- On startup or before handling a chat command, if `chat_state.json` says a session is busy, TickClaw must verify the recorded process or request is still alive. If it is not alive, mark the turn failed or aborted, clear busy state, persist `last_error`, and keep the last resumable session id when valid.
+- Do not let interactive chat mutate task-owned files unless the code agent itself is asked to edit them. The chat bridge is a transport for code-agent sessions, not a task scheduler feature.
+
+Chat bridge state machine:
+
+```mermaid
+stateDiagram-v2
+    [*] --> inactive
+
+    inactive --> selecting_new: /new or chat new
+    inactive --> selecting_session: /session or chat session
+
+    selecting_new --> active_idle: valid model selected and session id recorded
+    selecting_new --> inactive: cancel or no streaming runners
+    selecting_new --> selecting_new: bare text or stale/invalid selection ignored
+
+    selecting_session --> active_idle: valid previous session selected
+    selecting_session --> inactive: cancel or no resumable sessions
+    selecting_session --> selecting_session: bare text or stale/invalid selection ignored
+
+    active_idle --> selecting_new: /new or chat new
+    active_idle --> selecting_session: /session or chat session
+    active_idle --> active_idle: /exit local detach only
+    active_idle --> active_busy: user message accepted
+
+    active_busy --> aborting: /abort or local Ctrl+C
+    active_busy --> active_busy: /new, /session, or extra message busy reply
+    active_busy --> inactive: turn failed and session is not resumable
+    active_busy --> active_idle: turn completed and session resumable
+
+    aborting --> aborting: /new, /session, or extra message busy reply
+    aborting --> inactive: abort completed and session not resumable
+    aborting --> active_idle: abort completed and session resumable
+```
+
+- State values are `inactive`, `selecting_new`, `selecting_session`, `active_idle`, `active_busy`, and `aborting`.
+- `/new` and `/session` may replace the active chat only from `inactive` or `active_idle`. While `active_busy` or `aborting`, they must return a busy response and must not mutate state.
+- Bare Telegram text is accepted only in `active_idle`, where it starts a turn and moves to `active_busy`. Bare Telegram text while `inactive`, `selecting_new`, or `selecting_session` is ignored or answered with a short instruction to choose from the menu.
+- Local REPL user input is accepted only after model or session selection has completed. Ctrl+C moves `active_busy` to `aborting`; `/exit` detaches without changing the resumable session metadata.
+- Stale inline selections, runner removal after menu render, deleted menu messages, and invalid session ids must be rejected without changing state.
+- Every Telegram callback query must be authorized against `telegram.chat_id`, acknowledged, and revalidated against current config and `chat_state.json` before mutating state.
+- TickClaw records a session only after the adapter returns a stable session or thread id. Sessions with no stable id are not listed. Aborted or failed turns remain resumable only if the adapter confirms the session id is valid.
+
+Implementation approach decision:
+
+TickClaw will implement the chat bridge inside the Rust daemon with `teloxide` plus `codex-codes`. This is the selected MVP architecture because it preserves one config file, one daemon, one Telegram ingress path, and the CLI-first command model. Use `codex-codes` for Codex app-server JSON-RPC streaming, multi-turn threads, approval requests, and event parsing, pinned behind a `ChatAgent` trait. Gemini and future Claude support need separate adapters using `stream_args` or their own streaming protocol.
+
+Chat bridge implementation order is authoritative:
+
+1. Finish and validate config `stream_args`.
+2. Define a small internal `ChatAgent` interface before wiring Telegram UI. The interface should model starting a session, listing resumable sessions, resuming a selected session, sending one user turn, streaming assistant/tool events, and aborting the active turn.
+3. Implement the first concrete adapter for Codex using `codex-codes` and Codex `app-server` over `stdio://`.
+4. Add a local smoke path or tests proving the Codex adapter can start a session, list or resume sessions, stream a response, and abort a running turn.
+5. Add local `tickclaw chat new` and `tickclaw chat session` REPL commands.
+6. Add Telegram `/new`, `/session`, and `/abort`.
+7. Add Gemini support later through a separate adapter that consumes the configured Gemini `stream_args` and `stream-json` output.
+
+Preferred MVP path:
+
+Follow the authoritative implementation order above. Do not implement Telegram chat UI before the Codex `ChatAgent` adapter has a tested local smoke path.
+
+
 ## Planned Work
 
 - [x] Add skills according agents.md.
@@ -463,5 +484,12 @@ The smoke test should use the public task-management command surface. Do not use
 - [x] Add Telegram polling/ingress.
 - [x] Map `/task_list`, `/task_run`, `/task_status`, `/task_enable`, and `/task_disable` to CLI handlers.
 - [x] Add Gemini runner.
+- [ ] Add `stream_args` config for interactive Telegram code-agent chat.
+- [ ] Define the internal `ChatAgent` interface.
+- [ ] Implement the Codex `ChatAgent` adapter using `codex-codes`.
+- [ ] Add local `tickclaw chat new` REPL command.
+- [ ] Add local `tickclaw chat session` resume command.
+- [ ] Add Telegram `/new`, `/session`, and `/abort` for interactive code-agent sessions.
+- [ ] Add Gemini interactive streaming adapter.
 - [ ] Add Claude runner.
 - [ ] Add six-month task log retention and monthly `.tgz` log archives.
