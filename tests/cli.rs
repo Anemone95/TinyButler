@@ -30,6 +30,32 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 
+/// Return every file under a directory as paths relative to that directory.
+fn relative_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut pending_dirs = vec![root.to_path_buf()];
+
+    while let Some(dir) = pending_dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read directory") {
+            let entry = entry.expect("directory entry");
+            let path = entry.path();
+            let file_type = entry.file_type().expect("file type");
+            if file_type.is_dir() {
+                pending_dirs.push(path);
+            } else if file_type.is_file() {
+                files.push(
+                    path.strip_prefix(root)
+                        .expect("relative path")
+                        .to_path_buf(),
+                );
+            }
+        }
+    }
+
+    files.sort();
+    files
+}
+
 /// Convert command stderr into UTF-8 for readable failure messages.
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
@@ -49,6 +75,113 @@ fn init_then_check_creates_valid_home() {
 
     assert!(home.join("tasks/smoke-task/task.yaml").exists());
     assert!(home.join("tasks/regular-check/run.sh").exists());
+
+    let template_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    for relative_path in relative_files(&template_root) {
+        let template_text =
+            std::fs::read_to_string(template_root.join(&relative_path)).expect("template file");
+        let initialized_text =
+            std::fs::read_to_string(home.join(&relative_path)).expect("initialized file");
+        assert_eq!(
+            initialized_text,
+            template_text,
+            "init should copy template {} exactly",
+            relative_path.display()
+        );
+    }
+}
+
+#[test]
+fn init_codex_runners_read_prompt_from_stdin_and_emit_json() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tickclaw(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let config_text = std::fs::read_to_string(home.join("config.yaml")).expect("config");
+    let config: serde_yaml::Value = serde_yaml::from_str(&config_text).expect("parse config");
+    for runner in ["gpt-5.3-codex-spark", "gpt-5.5"] {
+        let args = config["code_agents"][runner]["args"]
+            .as_sequence()
+            .expect("args");
+        let resume_args = config["code_agents"][runner]["resume_args"]
+            .as_sequence()
+            .expect("resume args");
+
+        assert!(
+            args.iter().any(|value| value.as_str() == Some("--json")),
+            "{runner} fresh args should emit JSONL"
+        );
+        assert_eq!(
+            args.last().and_then(|value| value.as_str()),
+            Some("-"),
+            "{runner} fresh args should read prompt from stdin"
+        );
+        assert!(
+            resume_args
+                .iter()
+                .any(|value| value.as_str() == Some("--json")),
+            "{runner} resume args should emit JSONL"
+        );
+        assert_eq!(
+            resume_args.last().and_then(|value| value.as_str()),
+            Some("-"),
+            "{runner} resume args should read prompt from stdin"
+        );
+    }
+}
+
+#[test]
+fn init_stream_runners_include_complete_streaming_flags() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tickclaw(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let config_text = std::fs::read_to_string(home.join("config.yaml")).expect("config");
+    let config: serde_yaml::Value = serde_yaml::from_str(&config_text).expect("parse config");
+
+    let gemini_stream_args = config["code_agents"]["gemini-3.1-flash-lite"]["stream_args"]
+        .as_sequence()
+        .expect("gemini stream args");
+    assert!(
+        gemini_stream_args
+            .windows(2)
+            .any(|pair| pair[0].as_str() == Some("--output-format")
+                && pair[1].as_str() == Some("stream-json")),
+        "gemini streaming should use stream-json output"
+    );
+    assert!(
+        gemini_stream_args
+            .windows(2)
+            .any(|pair| pair[0].as_str() == Some("--approval-mode")
+                && pair[1].as_str() == Some("yolo")),
+        "gemini streaming should include approval mode"
+    );
+
+    for runner in ["gpt-5.3-codex-spark", "gpt-5.5"] {
+        let codex_stream_args = config["code_agents"][runner]["stream_args"]
+            .as_sequence()
+            .expect("codex stream args");
+        let codex_stream_arg_text = codex_stream_args
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            codex_stream_arg_text.contains(&"app-server"),
+            "{runner} streaming should use app-server"
+        );
+        assert!(
+            codex_stream_arg_text.contains(&format!("model=\"{runner}\"").as_str()),
+            "{runner} streaming should set model"
+        );
+        assert!(
+            codex_stream_arg_text.contains(&"sandbox_mode=\"danger-full-access\""),
+            "{runner} streaming should set sandbox mode"
+        );
+    }
 }
 
 #[test]
@@ -296,4 +429,16 @@ fn telegram_poll_is_not_a_public_cli_command() {
         !output.status.success(),
         "telegram polling should start from daemon, not --poll"
     );
+}
+
+#[test]
+fn chat_commands_are_public_cli_surface() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let output = run_tickclaw(home, &["chat", "--help"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(out.contains("new"));
+    assert!(out.contains("session"));
 }

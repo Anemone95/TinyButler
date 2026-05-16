@@ -27,6 +27,14 @@ code_agents:
       - json
       - "--prompt"
       - "{prompt}"
+    stream_args:
+      - "--model"
+      - gemini-3.1-flash-lite
+      - "--skip-trust"
+      - "--approval-mode"
+      - yolo
+      - "--output-format"
+      - stream-json
 
   gpt-5.3-codex-spark:
     command: /usr/bin/codex
@@ -46,6 +54,7 @@ code_agents:
     resume_args:
       - exec
       - resume
+      - "--json"
       - "{sessionId}"
       - "-c"
       - sandbox_mode="danger-full-access"
@@ -55,6 +64,14 @@ code_agents:
       - service_tier="fast"
       - "--skip-git-repo-check"
       - "-"
+    stream_args:
+      - app-server
+      - "-c"
+      - model="gpt-5.3-codex-spark"
+      - "-c"
+      - sandbox_mode="danger-full-access"
+      - "--listen"
+      - "stdio://"
   gpt-5.5:
     command: /usr/bin/codex
     args:
@@ -73,6 +90,7 @@ code_agents:
     resume_args:
       - exec
       - resume
+      - "--json"
       - "{sessionId}"
       - "-c"
       - sandbox_mode="danger-full-access"
@@ -82,3 +100,11 @@ code_agents:
       - service_tier="fast"
       - "--skip-git-repo-check"
       - "-"
+    stream_args:
+      - app-server
+      - "-c"
+      - model="gpt-5.5"
+      - "-c"
+      - sandbox_mode="danger-full-access"
+      - "--listen"
+      - "stdio://"

@@ -71,6 +71,16 @@ tickclaw task disable <task>
 
 Set `enabled: true` or `enabled: false` in the task's `task.yaml`.
 
+```bash
+tickclaw chat new
+tickclaw chat session
+```
+
+Start a local interactive code-agent chat session or resume a previous one.
+Choose a model/session from the prompt, then type messages. Use `/exit` to
+detach from the REPL without deleting the resumable session. Use Ctrl+C while a
+turn is running to abort that turn.
+
 ## Telegram Notifications
 
 Use Telegram for progress updates when operating remotely.
@@ -121,9 +131,15 @@ Telegram ingress commands handled by the daemon:
 /task_run <task>
 /task_enable <task>
 /task_disable <task>
+/new
+/session
+/abort
 ```
 
-Use slash commands only. Do not rely on bare text aliases such as `tasklist`.
+Use slash commands for task management. After `/new` or `/session` selects a
+code-agent session, bare text in the configured Telegram chat is redirected to
+that active session until it is replaced. `/abort` interrupts the active turn
+without deleting the resumable session.
 
 ## Runtime Layout
 
@@ -131,6 +147,8 @@ Use slash commands only. Do not rely on bare text aliases such as `tasklist`.
 ~/.tickclaw/
   config.yaml
   telegram_state.json
+  chat_state.json
+  chat.lock
   tickclaw.log
   tasks/
     <task-name>/
@@ -159,6 +177,8 @@ Runtime-owned files:
 - `logs/`
 - `.tickclaw.lock`
 - `~/.tickclaw/telegram_state.json`
+- `~/.tickclaw/chat_state.json`
+- `~/.tickclaw/chat.lock`
 
 Do not manually edit runtime-owned files or `data/` unless explicitly debugging
 runtime state corruption or task output issues.
@@ -199,6 +219,7 @@ code_agents:
     resume_args:
       - exec
       - resume
+      - "--json"
       - "{sessionId}"
       - "-m"
       - gpt-5.3-codex-spark

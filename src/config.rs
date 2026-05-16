@@ -51,6 +51,9 @@ pub struct CodeAgentConfig {
     /// Arguments used when `session: reuse` has a stored session id.
     #[serde(default)]
     pub resume_args: Vec<String>,
+    /// Arguments used for long-lived interactive chat bridge sessions.
+    #[serde(default)]
+    pub stream_args: Vec<String>,
 }
 
 impl Config {
@@ -92,153 +95,80 @@ impl Config {
         self.home.join("telegram_state.json")
     }
 
+    /// Runtime-owned interactive chat bridge state path.
+    pub fn chat_state_path(&self) -> PathBuf {
+        self.home.join("chat_state.json")
+    }
+
+    /// Home-level lock used to serialize interactive chat state mutations.
+    pub fn chat_lock_path(&self) -> PathBuf {
+        self.home.join("chat.lock")
+    }
+
     /// Create a safe initial TickClaw home without overwriting existing files.
     pub async fn init_home(&self) -> Result<()> {
-        fs::create_dir_all(self.tasks_dir()).await?;
-
-        write_if_missing(
-            &self.config_path(),
-            r#"telegram:
-  bot_token: null
-  chat_id: null
-
-code_agents:
-  gemini-3.1-flash-lite:
-    command: /usr/bin/gemini
-    args:
-      - "--model"
-      - gemini-3.1-flash-lite
-      - "--skip-trust"
-      - "--approval-mode"
-      - yolo
-      - "--output-format"
-      - json
-      - "--prompt"
-      - "{prompt}"
-    resume_args:
-      - "--model"
-      - gemini-3.1-flash-lite
-      - "--skip-trust"
-      - "--approval-mode"
-      - yolo
-      - "--resume"
-      - "{sessionId}"
-      - "--output-format"
-      - json
-      - "--prompt"
-      - "{prompt}"
-
-  gpt-5.3-codex-spark:
-    command: /usr/bin/codex
-    args:
-      - exec
-      - "--json"
-      - "--color"
-      - never
-      - "--sandbox"
-      - danger-full-access
-      - "-m"
-      - gpt-5.3-codex-spark
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-    resume_args:
-      - exec
-      - resume
-      - "{sessionId}"
-      - "-c"
-      - sandbox_mode="danger-full-access"
-      - "-m"
-      - gpt-5.3-codex-spark
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-  gpt-5.5:
-    command: /usr/bin/codex
-    args:
-      - exec
-      - "--json"
-      - "--color"
-      - never
-      - "--sandbox"
-      - danger-full-access
-      - "-m"
-      - gpt-5.5
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-    resume_args:
-      - exec
-      - resume
-      - "{sessionId}"
-      - "-c"
-      - sandbox_mode="danger-full-access"
-      - "-m"
-      - gpt-5.5
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-"#,
-        )
-        .await?;
-
-        let task_dir = self.tasks_dir().join("smoke-task");
-        fs::create_dir_all(task_dir.join("logs")).await?;
-        fs::create_dir_all(task_dir.join("data")).await?;
-        write_if_missing(
-            &task_dir.join("task.yaml"),
-            r#"name: smoke-task
-enabled: false
-schedule: "0 9 * * *"
-runner: gpt-5.3-codex-spark
-type: agent
-session: independent
-timeout: 3600
-"#,
-        )
-        .await?;
-        write_if_missing(
-            &task_dir.join("agent.md"),
-            "Inspect this task directory and summarize whether the task setup is healthy.\n",
-        )
-        .await?;
-
-        let shell_dir = self.tasks_dir().join("regular-check");
-        fs::create_dir_all(shell_dir.join("logs")).await?;
-        fs::create_dir_all(shell_dir.join("data")).await?;
-        write_if_missing(
-            &shell_dir.join("task.yaml"),
-            r#"name: regular-check
-enabled: true
-schedule: "*/10 * * * *"
-type: command
-timeout: 300
-"#,
-        )
-        .await?;
-        write_if_missing(
-            &shell_dir.join("run.sh"),
-            "#!/usr/bin/env bash\nset -euo pipefail\n\nprintf 'regular-check ok: %s\\n' \"$(date --iso-8601=seconds)\"\n",
-        )
-        .await?;
+        copy_templates_into_home(&self.home).await?;
 
         println!("Initialized TickClaw home at {}", self.home.display());
         Ok(())
     }
 }
 
-/// Write a template file only when the user has not already created one.
-async fn write_if_missing(path: &Path, contents: &str) -> Result<()> {
-    if path.exists() {
+/// Copy repository templates into a TickClaw home without overwriting user files.
+async fn copy_templates_into_home(home: &Path) -> Result<()> {
+    let template_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let mut pending_dirs = vec![template_root.clone()];
+
+    while let Some(source_dir) = pending_dirs.pop() {
+        let relative_dir = source_dir
+            .strip_prefix(&template_root)
+            .with_context(|| format!("failed to relativize {}", source_dir.display()))?;
+        let target_dir = home.join(relative_dir);
+        fs::create_dir_all(&target_dir)
+            .await
+            .with_context(|| format!("failed to create {}", target_dir.display()))?;
+
+        let mut entries = fs::read_dir(&source_dir).await.with_context(|| {
+            format!("failed to read template directory {}", source_dir.display())
+        })?;
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            if file_type.is_dir() {
+                pending_dirs.push(entry.path());
+            } else if file_type.is_file() {
+                copy_template_file_if_missing(&entry.path(), &target_dir.join(entry.file_name()))
+                    .await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Copy one template file only when the user has not already created it.
+async fn copy_template_file_if_missing(source: &Path, target: &Path) -> Result<()> {
+    if target.exists() {
         return Ok(());
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    fs::write(path, contents).await?;
+
+    let permissions = fs::metadata(source)
+        .await
+        .with_context(|| format!("failed to stat template {}", source.display()))?
+        .permissions();
+    fs::copy(source, target).await.with_context(|| {
+        format!(
+            "failed to copy template {} to {}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    fs::set_permissions(target, permissions)
+        .await
+        .with_context(|| format!("failed to set permissions on {}", target.display()))?;
     Ok(())
 }

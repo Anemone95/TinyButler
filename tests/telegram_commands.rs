@@ -18,6 +18,13 @@ fn parses_task_list_slash_command() {
 }
 
 #[test]
+fn parses_chat_bridge_commands() {
+    assert_eq!(parse_ingress_command("/new"), IngressCommand::New);
+    assert_eq!(parse_ingress_command("/session"), IngressCommand::Session);
+    assert_eq!(parse_ingress_command("/abort"), IngressCommand::Abort);
+}
+
+#[test]
 fn rejects_bare_or_legacy_tasklist_aliases() {
     assert!(matches!(
         parse_ingress_command("tasklist"),

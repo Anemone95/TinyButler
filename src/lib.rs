@@ -4,6 +4,7 @@
 //! schema and scheduler behavior without embedding test code in implementation
 //! files.
 
+pub mod chat;
 pub mod config;
 pub mod cron_expr;
 pub mod lock;

@@ -40,6 +40,8 @@ make install CARGO_INSTALL_ARGS='--root ~/.local --force'
 ~/.tickclaw/
   config.yaml
   telegram_state.json
+  chat_state.json
+  chat.lock
   tasks/
     smoke-task/
       data/
@@ -55,7 +57,7 @@ make install CARGO_INSTALL_ARGS='--root ~/.local --force'
       state.json
 ```
 
-`task.yaml`, `agent.md`, and `run.sh` are task-owned. `state.json`, `logs/`, `.tickclaw.lock`, and `~/.tickclaw/telegram_state.json` are daemon-owned. `data/` belongs to the task execution.
+`task.yaml`, `agent.md`, and `run.sh` are task-owned. `state.json`, `logs/`, `.tickclaw.lock`, `~/.tickclaw/telegram_state.json`, `~/.tickclaw/chat_state.json`, and `~/.tickclaw/chat.lock` are daemon-owned. `data/` belongs to the task execution.
 
 ## Task Files
 
@@ -99,9 +101,13 @@ tickclaw task run <task>
 tickclaw task status <task>
 tickclaw task enable <task>
 tickclaw task disable <task>
+tickclaw chat new
+tickclaw chat session
 ```
 
 `tickclaw check` validates local config and task definitions. `tickclaw task status <task>` shows task details, current state, and the first 20 lines of the latest log.
+
+`tickclaw chat new` starts a local REPL for an interactive Codex chat session. `tickclaw chat session` resumes a previous session. Use `/exit` to detach and Ctrl+C to abort an active turn.
 
 ## Telegram
 
@@ -114,6 +120,8 @@ telegram:
 ```
 
 TickClaw uses Telegram Bot HTTP API calls. `tickclaw telegram '<message>'`, media captions, and compact daemon-generated summaries use MarkdownV2. TickClaw sanitizes CLI-authored Telegram messages before sending; still escape dynamic content deliberately when composing MarkdownV2. Send arbitrary logs and large text as documents. Agent tasks may call `tickclaw telegram ...` themselves when they want to notify. The daemon sends fallback notifications for failures, and shell tasks notify when stdout is non-empty or when the task fails. The daemon stores Telegram long-polling offset state in `~/.tickclaw/telegram_state.json`.
+
+When the daemon is running, Telegram also supports `/new`, `/session`, and `/abort` for the interactive code-agent chat bridge. `/new` opens a model menu, `/session` opens a resumable-session menu, and bare Telegram text is redirected to the active chat session after selection.
 
 ## Development
 
