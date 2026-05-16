@@ -75,9 +75,10 @@ TickClaw/
 
 ```text
 ~/.tickclaw/
-  config.yaml      # local TickClaw config and Telegram secrets
-  tickclaw.log     # daemon-level log file
-  tasks/           # task directories managed by files
+  config.yaml           # local TickClaw config and Telegram secrets
+  telegram_state.json   # Telegram polling offset state written by TickClaw
+  tickclaw.log          # daemon-level log file
+  tasks/                # task directories managed by files
     smoke-task/    # on-demand or low-frequency agent task for deeper repository inspection
       data/        # task execution or sub-agent-owned working data
       task.yaml    # task definition and schedule
@@ -103,6 +104,7 @@ Runtime-owned files:
 - `state.json`
 - `logs/`
 - `.tickclaw.lock`
+- `~/.tickclaw/telegram_state.json`
 
 Task execution or sub-agent-owned files:
 
@@ -262,13 +264,28 @@ telegram:
 
 Do not put real Telegram tokens or chat ids in the repository, examples, or README.
 
-Telegram parse mode is always Markdown and is not user-configurable.
+Telegram parse mode is `MarkdownV2` for compact TickClaw-generated summaries only and is not user-configurable. All task names, paths, stdout, stderr, log previews, task prompts, scripts, captions, and other user-controlled content must be MarkdownV2-escaped before sending. Use one shared escaping helper for all Telegram messages; `teloxide::utils::markdown` is the preferred mature Rust helper set when the dependency is acceptable. If converting full Markdown documents to Telegram MarkdownV2 is needed, use a dedicated converter such as `telegram_markdown_v2` instead of ad hoc string rewriting.
+
+Large or arbitrary text blocks should be sent as documents, or sent without `parse_mode` when no TickClaw-generated formatting is required. Safely escaped code blocks are acceptable only for short previews.
 
 Telegram sender should avoid leaking bot tokens in errors. If using reqwest errors, strip URLs before returning or logging errors.
 
 For outbound-only Telegram messages, photos, and documents, TickClaw should use direct Telegram Bot HTTP API calls or a lightweight wrapper. Do not add a full bot framework for outbound-only sending.
 
 For the MVP Telegram ingress loop, direct Telegram Bot API long polling is acceptable because it only routes a few local CLI-equivalent commands. For richer polling, webhook, inline buttons, callback queries, dialogue state, or larger bot workflows, prefer `teloxide`.
+
+Telegram long polling must persist the highest handled `update_id` to `~/.tickclaw/telegram_state.json` so daemon restarts do not execute old Telegram commands again. On startup, TickClaw must call `getUpdates` with the persisted offset. If no persisted state exists, TickClaw may start from the first returned update and persist offsets as commands are handled; do not silently replay already persisted updates.
+
+`~/.tickclaw/telegram_state.json` example:
+
+```json
+{
+  "last_update_id": 123456789,
+  "last_poll_at": "2026-05-16T20:00:00+02:00"
+}
+```
+
+If a Telegram webhook is configured for the bot, `getUpdates` long polling will not work until the webhook is removed.
 
 2. Config code agents:
 
