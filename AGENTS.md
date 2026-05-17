@@ -283,6 +283,14 @@ Telegram sender should avoid leaking bot tokens in errors. If using reqwest erro
 
 For outbound-only Telegram messages, photos, and documents, TinyButler should use direct Telegram Bot HTTP API calls or a lightweight wrapper. Do not add a full bot framework for outbound-only sending.
 
+Telegram media delivery from chat-agent output follows the OpenClaw-style reply payload convention:
+
+- A code agent may request an outbound attachment by putting `MEDIA:<path-or-url>` on its own line in the final assistant-visible answer.
+- TinyButler must parse those `MEDIA:` lines, remove them from the visible Telegram text, and send the referenced files as Telegram media when they are local files of an allowed sendable type. For the MVP, images such as `.png`, `.jpg`, `.jpeg`, `.webp`, and `.gif` should be sent as photos or animations where Telegram supports them; unknown or unsupported local file types should not be silently posted as text.
+- Local `MEDIA:` paths may be absolute, home-relative with `~/`, or relative to the chat agent working directory. Resolve and validate local paths before upload. Do not treat arbitrary plain text or secret-like files as sendable media.
+- Captions should come from the remaining visible text, not from the `MEDIA:` marker itself. Keep Telegram caption limits in mind; long text should be sent separately.
+- TinyButler may also continue to support the explicit CLI media path, `tinybutler telegram --photo <path>` or `--document <path>`, for agents that choose to send directly.
+
 For the MVP Telegram ingress loop, direct Telegram Bot API long polling is acceptable because it only routes a few local CLI-equivalent commands. For richer polling, webhook, inline buttons, callback queries, dialogue state, or larger bot workflows, prefer `teloxide`.
 
 Telegram long polling must persist the highest handled `update_id` to `~/.tinybutler/telegram_state.json` so daemon restarts do not execute old Telegram commands again. On startup, TinyButler must call `getUpdates` with the persisted offset. If no persisted state exists, TinyButler may start from the first returned update and persist offsets as commands are handled; do not silently replay already persisted updates.
@@ -336,14 +344,16 @@ All project decisions, requirements, and implementation rules agreed in agent co
 
 Update `skills/` and `README.md` according to the latest AGENTS.md. Project skills are for operating and configuring an installed TinyButler instance, not for developing TinyButler itself. They must be self-contained guides for code agents that may not have access to TinyButler's Rust source, and should explain how to use the installed `tinybutler` CLI, configure `~/.tinybutler/config.yaml`, create task directories, manage `task.yaml`, and send Telegram messages.
 
+`make install` must install the release binary and also install or refresh TinyButler project skills under `${CODEX_HOME:-$HOME/.codex}/skills/` so code agents launched outside the repository can discover installed TinyButler operation guidance. The install target should overwrite the project-owned TinyButler skill directory with the repository version. `make uninstall` should remove the installed project skill directory along with the user service and binary.
+
 Use `make syncdoc` when only `AGENTS.md` should be committed and pushed. The target runs `git add AGENTS.md`, `git commit -m "sync"`, and `git push`.
 
 Makefile targets:
 
 - `make`: build the debug binary with `cargo build`.
 - `make verify`: run `cargo fmt`, `cargo check`, `cargo test`, and `cargo clippy -- -D warnings`.
-- `make install`: run `cargo install --path . $(CARGO_INSTALL_ARGS)`, write `~/.config/systemd/user/tinybutler.service`, run `systemctl --user enable --now tinybutler.service`, and try `loginctl enable-linger "$USER"` so the user service can start at boot. `CARGO_INSTALL_ARGS` defaults to `--force`; pass Cargo install options through it, for example `make install CARGO_INSTALL_ARGS='--root ~/.local --force'`.
-- `make uninstall`: stop and disable the user service, remove the service file, and remove the installed binary.
+- `make install`: run `cargo install --path . $(CARGO_INSTALL_ARGS)` for the release binary, install or refresh project skills under `${CODEX_HOME:-$HOME/.codex}/skills/`, write `~/.config/systemd/user/tinybutler.service`, run `systemctl --user enable --now tinybutler.service`, and try `loginctl enable-linger "$USER"` so the user service can start at boot. `CARGO_INSTALL_ARGS` defaults to `--force`; pass Cargo install options through it, for example `make install CARGO_INSTALL_ARGS='--root ~/.local --force'`.
+- `make uninstall`: stop and disable the user service, remove the service file, remove the installed binary, and remove the installed TinyButler project skill directory.
 - `make service-status`: show the user service status.
 
 Before committing Rust code changes, run:
@@ -402,6 +412,13 @@ Interactive chat behavior:
 - When a redirected user message is accepted, TinyButler should acknowledge the Telegram message with a check mark reaction when Telegram supports reactions; if reactions fail, continue without failing the turn.
 - While the code agent is running, TinyButler should keep sending Telegram `typing` chat actions until the turn completes.
 - Code-agent output should be streamed back to Telegram. Prefer throttled message edits for growing assistant text and separate messages for notable tool output or errors. Avoid one Telegram API call per token.
+- Streaming progress may show partial assistant-visible text while a turn is running, but the final Telegram result must prioritize the final answer. When final assistant text is available, TinyButler must collapse or remove hidden reasoning, scratchpad text, and internal scaffolding instead of leaving it expanded in the final message.
+- TinyButler must sanitize final chat-agent output before Telegram delivery using the same broad policy OpenClaw applies to visible assistant text: strip reasoning tags and their content, including `<think>`, `<thinking>`, `<thought>`, `<antthinking>`, and `antml:` variants; strip leftover `<final>` tags; when a valid final block exists, prefer the final block's visible content. Do not strip those tags inside fenced code blocks if the model is intentionally showing code.
+- The Telegram chat bridge must not merge raw tool output into the main final answer by default. Tool or command output can be used for progress/debug previews, but the final user-facing message should come from assistant-visible text plus media delivery results.
+- If final assistant-visible output contains `MEDIA:<path-or-url>` lines, TinyButler must treat them as outbound attachment directives, remove the marker lines from visible text, upload supported local images to Telegram, and avoid sending duplicate marker text. This mirrors OpenClaw's documented media reply protocol and makes screenshots deliverable without requiring a Telegram-specific code-agent tool.
+- As a compatibility fallback for code agents that create a screenshot but forget the `MEDIA:` marker, TinyButler may detect existing local image paths mentioned plainly in the final assistant-visible answer and upload those supported image files once. `MEDIA:` remains the preferred explicit protocol; plain path detection is only a best-effort bridge fallback for local images that already exist.
+- Chat bridge instructions given to Codex or future adapters should explicitly tell the model that it is behind TinyButler's Telegram bridge, must not expose chain-of-thought, and should either call `tinybutler telegram --photo <path>` directly or include `MEDIA:<path>` on its own line when it creates an image or screenshot for the user.
+- For Linux desktop screenshot requests, bridge instructions should point agents at the installed screenshot helper when present: `/home/wenyuan/linux_dotfiles/skills/screenshot/scripts/take_screenshot.py --mode temp`. The agent should then send the resulting image through `tinybutler telegram --photo` or `MEDIA:<path>`.
 - If message edits fail, fall back to sending a new escaped message. If output exceeds Telegram message limits, send chunks or a document. On adapter error, timeout, or nonzero exit, clear busy state, persist the error, and send a concise failure message.
 - Escape all Telegram MarkdownV2 text before sending. Large or arbitrary output must be chunked or sent as a document instead of one oversized Markdown message.
 - If a session is already busy, the MVP should reject a second user message with a clear busy response instead of queuing multiple turns. `/abort` must remain available while busy and must stop the current code-agent process or turn promptly.

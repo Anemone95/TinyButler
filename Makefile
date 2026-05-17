@@ -3,13 +3,15 @@
 CARGO ?= cargo
 CARGO_HOME ?= $(HOME)/.cargo
 CARGO_INSTALL_ARGS ?= --force
+CODEX_HOME ?= $(HOME)/.codex
+CODEX_SKILLS_DIR ?= $(CODEX_HOME)/skills
 SYSTEMD_USER_DIR ?= $(HOME)/.config/systemd/user
 SERVICE_NAME ?= tinybutler.service
 SERVICE_FILE := $(SYSTEMD_USER_DIR)/$(SERVICE_NAME)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build fmt check test clippy verify install uninstall service-status syncdoc
+.PHONY: build fmt check test clippy verify install install-skills uninstall service-status syncdoc
 
 # Build the debug binary for local development.
 build:
@@ -35,7 +37,7 @@ clippy:
 verify: fmt check test clippy
 
 # Install with Cargo and enable the user-level systemd daemon.
-install:
+install: install-skills
 	$(CARGO) install --path . $(CARGO_INSTALL_ARGS)
 	install -d "$(SYSTEMD_USER_DIR)"
 	@install_root="$${CARGO_INSTALL_ROOT:-$${CARGO_HOME:-$(CARGO_HOME)}}"; \
@@ -72,6 +74,18 @@ install:
 	systemctl --user enable --now "$(SERVICE_NAME)"
 	@printf '%s\n' "Enabled $(SERVICE_NAME)"
 
+# Install project-owned Codex skills for agents launched outside this repository.
+install-skills:
+	install -d "$(CODEX_SKILLS_DIR)"
+	@for skill in skills/*; do \
+		if [ -d "$$skill" ]; then \
+			name="$$(basename "$$skill")"; \
+			rm -rf "$(CODEX_SKILLS_DIR)/$$name"; \
+			cp -R "$$skill" "$(CODEX_SKILLS_DIR)/$$name"; \
+			printf '%s\n' "Installed TinyButler skill $(CODEX_SKILLS_DIR)/$$name"; \
+		fi; \
+	done
+
 # Stop and remove the user-level systemd daemon and installed binary.
 uninstall:
 	-systemctl --user disable --now "$(SERVICE_NAME)"
@@ -84,7 +98,8 @@ uninstall:
 		esac; \
 		shift || true; \
 	done; \
-	rm -f "$(SERVICE_FILE)" "$${install_root%/}/bin/tinybutler"
+	rm -f "$(SERVICE_FILE)" "$${install_root%/}/bin/tinybutler"; \
+	rm -rf "$(CODEX_SKILLS_DIR)/tinybutler-operations"
 	-systemctl --user daemon-reload
 
 # Show the installed user service status.

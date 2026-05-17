@@ -28,7 +28,7 @@ Install the release binary and enable the user-level systemd daemon:
 make install
 ```
 
-`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs to `~/.cargo/bin/tinybutler`. It also writes `~/.config/systemd/user/tinybutler.service`, runs `systemctl --user enable --now tinybutler.service`, and tries to enable lingering so the service can start at boot. Pass extra Cargo install options through `CARGO_INSTALL_ARGS`:
+`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs the release binary to `~/.cargo/bin/tinybutler`. It also installs the TinyButler operation skill under `${CODEX_HOME:-$HOME/.codex}/skills/`, writes `~/.config/systemd/user/tinybutler.service`, runs `systemctl --user enable --now tinybutler.service`, and tries to enable lingering so the service can start at boot. Pass extra Cargo install options through `CARGO_INSTALL_ARGS`:
 
 ```bash
 make install CARGO_INSTALL_ARGS='--root ~/.local --force'
@@ -125,6 +125,8 @@ TinyButler uses Telegram Bot HTTP API calls. `tinybutler telegram '<message>'`, 
 When `tinybutler daemon` starts with Telegram configured, it refreshes the bot slash-command menu for the configured chat so clients show the current TinyButler command names and descriptions.
 
 When the daemon is running, Telegram also supports `/new`, `/session`, and `/abort` for the interactive code-agent chat bridge. `/new` opens a model menu, `/session` opens a resumable-session menu, and bare Telegram text is redirected to the active chat session after selection.
+
+For chat-bridge media replies, a code agent can create a local image and include `MEDIA:<path>` on its own line in the final answer. TinyButler removes the marker from visible text and uploads supported image files to Telegram. As a compatibility fallback, TinyButler also detects existing local image paths in final replies and uploads them once. The bridge strips hidden reasoning tags from final replies so the chat focuses on the answer and delivered media.
 
 ## Development
 

@@ -437,7 +437,10 @@ impl ChatAgent for CodexChatAgent {
     async fn start_session(&mut self) -> Result<ChatSession> {
         let thread = self
             .client
-            .thread_start(&ThreadStartParams::default())
+            .thread_start(&ThreadStartParams {
+                instructions: Some(chat_bridge_instructions()),
+                tools: None,
+            })
             .await
             .context("failed to start Codex thread")?;
         let session = ChatSession {
@@ -475,7 +478,7 @@ impl ChatAgent for CodexChatAgent {
                     base_instructions: None,
                     config: None,
                     cwd: None,
-                    developer_instructions: None,
+                    developer_instructions: Some(chat_bridge_instructions()),
                     model: None,
                     model_provider: None,
                     personality: None,
@@ -559,6 +562,17 @@ impl ChatAgent for CodexChatAgent {
             resumable: true,
         })
     }
+}
+
+fn chat_bridge_instructions() -> String {
+    [
+        "You are connected to the user through TinyButler's Telegram chat bridge.",
+        "Never expose hidden chain-of-thought, scratchpad text, or reasoning tags such as <think>, <thinking>, <thought>, or <final>. Send only the concise user-visible result.",
+        "When the user asks for an image, screenshot, or generated media, create a local file and make it deliverable. Prefer calling `tinybutler telegram --photo <path> --caption '<short caption>'` when you intentionally want to send it yourself.",
+        "If you cannot or do not call the TinyButler Telegram CLI directly, include `MEDIA:<path>` on its own line in the final answer. TinyButler will upload that file to Telegram and remove the marker from the visible text.",
+        "For a current Linux desktop screenshot, use `/home/wenyuan/linux_dotfiles/skills/screenshot/scripts/take_screenshot.py --mode temp` when it exists, then send the resulting PNG or include it as `MEDIA:<path>`.",
+    ]
+    .join("\n")
 }
 
 /// Build a Codex app-server builder from a TinyButler `stream_args` runner entry.
@@ -677,6 +691,16 @@ mod tests {
 
         assert_eq!(codex_streaming_runner_keys(&config), vec!["codex"]);
         assert_eq!(streaming_runner_keys(&config), vec!["codex", "gemini"]);
+    }
+
+    #[test]
+    fn bridge_instructions_describe_media_delivery() {
+        let instructions = chat_bridge_instructions();
+
+        assert!(instructions.contains("TinyButler"));
+        assert!(instructions.contains("MEDIA:<path>"));
+        assert!(instructions.contains("tinybutler telegram --photo"));
+        assert!(instructions.contains("take_screenshot.py"));
     }
 
     #[tokio::test]

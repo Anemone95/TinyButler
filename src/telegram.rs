@@ -4,7 +4,7 @@
 //! ingress path uses direct Bot API long polling for the task-management slash
 //! commands and can later be replaced by a richer teloxide workflow.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -55,12 +55,14 @@ pub async fn send_text(config: &Config, text: &str) -> Result<()> {
 
 /// Send a local image file as a Telegram photo.
 pub async fn send_photo(config: &Config, path: &Path, caption: Option<&str>) -> Result<()> {
-    send_media(config, "sendPhoto", "photo", path, caption).await
+    let chat_id = configured_chat_id(config)?;
+    send_media_to_chat(config, "sendPhoto", "photo", &chat_id, path, caption).await
 }
 
 /// Send a local file as a Telegram document.
 pub async fn send_document(config: &Config, path: &Path, caption: Option<&str>) -> Result<()> {
-    send_media(config, "sendDocument", "document", path, caption).await
+    let chat_id = configured_chat_id(config)?;
+    send_media_to_chat(config, "sendDocument", "document", &chat_id, path, caption).await
 }
 
 /// Send the scheduler's standard task-run notification message.
@@ -621,9 +623,13 @@ async fn run_telegram_chat_turn(
         .code_agents
         .get(&runner)
         .with_context(|| format!("missing code_agents.{runner}"))?;
-    let mut agent =
-        CodexChatAgent::connect(runner.clone(), agent_config, Some(std::env::current_dir()?))
-            .await?;
+    let working_directory = std::env::current_dir()?;
+    let mut agent = CodexChatAgent::connect(
+        runner.clone(),
+        agent_config,
+        Some(working_directory.clone()),
+    )
+    .await?;
     if let Err(err) = agent.resume_session(&session_id).await {
         if codex_resume_missing_rollout(&err) {
             agent.start_session().await?;
@@ -645,7 +651,8 @@ async fn run_telegram_chat_turn(
         }
     });
 
-    let mut output = String::new();
+    let mut assistant_output = String::new();
+    let mut tool_output = String::new();
     let mut last_edit = Instant::now();
     let mut aborted = false;
     loop {
@@ -660,17 +667,23 @@ async fn run_telegram_chat_turn(
             }
             event = agent.next_event() => {
                 match event? {
-                    Some(ChatEvent::AssistantDelta(delta) | ChatEvent::ToolDelta(delta)) => {
-                        output.push_str(&delta);
+                    Some(ChatEvent::AssistantDelta(delta)) => {
+                        assistant_output.push_str(&delta);
                         if last_edit.elapsed() >= Duration::from_millis(1200) {
-                            edit_or_send_markdown(&config, &chat_id, placeholder, &telegram_output_preview(&output)).await?;
+                            let preview = telegram_output_preview(&assistant_visible_text(&assistant_output));
+                            if !preview.trim().is_empty() {
+                                edit_or_send_markdown(&config, &chat_id, placeholder, &preview).await?;
+                            }
                             last_edit = Instant::now();
                         }
                     }
+                    Some(ChatEvent::ToolDelta(delta)) => {
+                        tool_output.push_str(&delta);
+                    }
                     Some(ChatEvent::Info(_)) => {}
                     Some(ChatEvent::Warning(warning)) => {
-                        output.push_str("\n[warning] ");
-                        output.push_str(&warning);
+                        tool_output.push_str("\n[warning] ");
+                        tool_output.push_str(&warning);
                     }
                     Some(ChatEvent::ApprovalRequired(request)) => {
                         let error = format!("chat turn requires unsupported approval: {request}");
@@ -680,12 +693,25 @@ async fn run_telegram_chat_turn(
                     }
                     Some(ChatEvent::TurnCompleted) => {
                         typing_done.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let final_text = if output.trim().is_empty() {
-                            if aborted { "Aborted".to_string() } else { "(no output)".to_string() }
-                        } else {
-                            output.clone()
-                        };
+                        let mut final_text = assistant_visible_text(&assistant_output);
+                        let mut media_paths =
+                            extract_outbound_media_paths(&assistant_output, &working_directory);
+                        final_text = remove_media_markers(&final_text).trim().to_string();
+                        extend_unique_paths(
+                            &mut media_paths,
+                            extract_plain_image_paths(&final_text, &working_directory),
+                        );
+                        if final_text.trim().is_empty() {
+                            if aborted {
+                                final_text = "Aborted".to_string();
+                            } else if media_paths.is_empty() {
+                                final_text = "(no output)".to_string();
+                            } else {
+                                final_text = "Sent media.".to_string();
+                            }
+                        }
                         send_telegram_output(&config, &chat_id, placeholder, &final_text).await?;
+                        send_outbound_media_paths(&config, &chat_id, &media_paths, &final_text).await?;
                         mark_turn_finished(&config, agent.active_session(), None).await?;
                         return Ok(());
                     }
@@ -849,14 +875,16 @@ impl TelegramBotCommand {
     }
 }
 
-async fn send_media(
+async fn send_media_to_chat(
     config: &Config,
     method: &str,
     field_name: &'static str,
+    chat_id: &str,
     path: &Path,
     caption: Option<&str>,
 ) -> Result<()> {
-    let (client, url, chat_id) = telegram_request(config, method)?;
+    let client = Client::new();
+    let url = telegram_method_url(config, method)?;
     let bytes = tokio::fs::read(path)
         .await
         .with_context(|| format!("failed to read {}", path.display()))?;
@@ -883,12 +911,6 @@ async fn send_media(
         .map_err(|err| anyhow!("Telegram {method} request failed: {}", err.without_url()))?;
 
     ensure_success(response, method).await
-}
-
-fn telegram_request(config: &Config, method: &str) -> Result<(Client, String, String)> {
-    let chat_id = configured_chat_id(config)?;
-
-    Ok((Client::new(), telegram_method_url(config, method)?, chat_id))
 }
 
 async fn send_markdown_text_to_chat(config: &Config, chat_id: &str, text: &str) -> Result<()> {
@@ -1198,6 +1220,311 @@ async fn ensure_success(response: reqwest::Response, method: &str) -> Result<()>
     Ok(())
 }
 
+async fn send_outbound_media_paths(
+    config: &Config,
+    chat_id: &str,
+    paths: &[PathBuf],
+    _visible_text: &str,
+) -> Result<()> {
+    for path in paths {
+        if !is_supported_photo_path(path) {
+            continue;
+        }
+        send_media_to_chat(config, "sendPhoto", "photo", chat_id, path, None).await?;
+    }
+    Ok(())
+}
+
+fn assistant_visible_text(text: &str) -> String {
+    transform_outside_fenced_code(text, sanitize_visible_segment)
+}
+
+fn sanitize_visible_segment(segment: &str) -> String {
+    let final_content =
+        extract_tag_content(segment, "final").unwrap_or_else(|| segment.to_string());
+    strip_final_tags(&strip_reasoning_blocks(&final_content))
+        .trim()
+        .to_string()
+}
+
+fn extract_outbound_media_paths(text: &str, working_directory: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        if is_fence_boundary(line) {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let Some(raw) = strip_ascii_prefix(trimmed, "MEDIA:") else {
+            continue;
+        };
+        let Some(path) = resolve_media_path(raw, working_directory) else {
+            continue;
+        };
+        if !paths.iter().any(|known| known == &path) {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
+fn extract_plain_image_paths(text: &str, working_directory: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for raw in text.split_whitespace() {
+        let Some(path) = resolve_media_path(raw, working_directory) else {
+            continue;
+        };
+        if !paths.iter().any(|known| known == &path) {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
+fn extend_unique_paths(paths: &mut Vec<PathBuf>, extra_paths: Vec<PathBuf>) {
+    for path in extra_paths {
+        if !paths.iter().any(|known| known == &path) {
+            paths.push(path);
+        }
+    }
+}
+
+fn remove_media_markers(text: &str) -> String {
+    let mut out = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        if is_fence_boundary(line) {
+            in_fence = !in_fence;
+            out.push(line);
+            continue;
+        }
+        if !in_fence && strip_ascii_prefix(line.trim_start(), "MEDIA:").is_some() {
+            continue;
+        }
+        out.push(line);
+    }
+    out.join("\n")
+}
+
+fn resolve_media_path(raw: &str, working_directory: &Path) -> Option<PathBuf> {
+    let candidate = normalize_media_candidate(raw)?;
+    if candidate.starts_with("http://")
+        || candidate.starts_with("https://")
+        || candidate.starts_with("file://")
+    {
+        return None;
+    }
+    let expanded = if let Some(rest) = candidate.strip_prefix("~/") {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join(rest))?
+    } else {
+        PathBuf::from(candidate)
+    };
+    let path = if expanded.is_absolute() {
+        expanded
+    } else {
+        working_directory.join(expanded)
+    };
+    if !is_supported_photo_path(&path) || !path.is_file() {
+        return None;
+    }
+    std::fs::canonicalize(&path).ok().or(Some(path))
+}
+
+fn normalize_media_candidate(raw: &str) -> Option<String> {
+    let mut value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(quoted) = value.strip_prefix('"') {
+        value = quoted.split('"').next().unwrap_or(quoted);
+    } else if let Some(quoted) = value.strip_prefix('\'') {
+        value = quoted.split('\'').next().unwrap_or(quoted);
+    } else if let Some(quoted) = value.strip_prefix('`') {
+        value = quoted.split('`').next().unwrap_or(quoted);
+    } else if let Some(first) = value.split_whitespace().next() {
+        value = first;
+    }
+    let cleaned = value.trim_matches(|ch: char| {
+        matches!(
+            ch,
+            '"' | '\'' | '`' | ',' | ';' | ')' | ']' | '}' | '<' | '>'
+        )
+    });
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned.to_string())
+    }
+}
+
+fn is_supported_photo_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "webp" | "gif"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn transform_outside_fenced_code(text: &str, transform: fn(&str) -> String) -> String {
+    let mut output = String::new();
+    let mut segment = String::new();
+    let mut code = String::new();
+    let mut in_fence = false;
+
+    for line in text.split_inclusive('\n') {
+        if is_fence_boundary(line) {
+            if in_fence {
+                code.push_str(line);
+                output.push_str(&code);
+                code.clear();
+                in_fence = false;
+            } else {
+                let transformed = transform(&segment);
+                output.push_str(&transformed);
+                if !transformed.is_empty() && !transformed.ends_with('\n') {
+                    output.push('\n');
+                }
+                segment.clear();
+                code.push_str(line);
+                in_fence = true;
+            }
+            continue;
+        }
+
+        if in_fence {
+            code.push_str(line);
+        } else {
+            segment.push_str(line);
+        }
+    }
+
+    if in_fence {
+        output.push_str(&code);
+    }
+    output.push_str(&transform(&segment));
+    output
+}
+
+fn is_fence_boundary(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+}
+
+fn strip_ascii_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    value
+        .get(..prefix.len())
+        .filter(|head| head.eq_ignore_ascii_case(prefix))
+        .map(|_| &value[prefix.len()..])
+}
+
+#[derive(Debug, Clone)]
+struct SimpleTag {
+    start: usize,
+    end: usize,
+    name: String,
+}
+
+fn extract_tag_content(text: &str, name: &str) -> Option<String> {
+    let open = find_tag(text, 0, &[name], false)?;
+    let close = find_tag(text, open.end, &[name], true)?;
+    Some(text[open.end..close.start].to_string())
+}
+
+fn strip_final_tags(text: &str) -> String {
+    strip_tag_markers(text, &["final"])
+}
+
+fn strip_tag_markers(text: &str, names: &[&str]) -> String {
+    let mut cleaned = text.to_string();
+    while let Some(tag) =
+        find_tag(&cleaned, 0, names, false).or_else(|| find_tag(&cleaned, 0, names, true))
+    {
+        cleaned.replace_range(tag.start..tag.end, "");
+    }
+    cleaned
+}
+
+fn strip_reasoning_blocks(text: &str) -> String {
+    let mut cleaned = text.to_string();
+    let names = ["think", "thinking", "thought", "antthinking"];
+    while let Some(open) = find_tag(&cleaned, 0, &names, false) {
+        if let Some(close) = find_tag(&cleaned, open.end, &[open.name.as_str()], true) {
+            cleaned.replace_range(open.start..close.end, "");
+        } else {
+            cleaned.truncate(open.start);
+            break;
+        }
+    }
+    strip_tag_markers(&cleaned, &names)
+}
+
+fn find_tag(text: &str, from: usize, names: &[&str], closing: bool) -> Option<SimpleTag> {
+    let lower = text.to_ascii_lowercase();
+    let mut search = from.min(lower.len());
+    while let Some(relative) = lower[search..].find('<') {
+        let start = search + relative;
+        let mut index = start + 1;
+        skip_ascii_whitespace(&lower, &mut index);
+
+        let is_closing = lower[index..].starts_with('/');
+        if is_closing {
+            index += 1;
+            skip_ascii_whitespace(&lower, &mut index);
+        }
+        if is_closing != closing {
+            search = start + 1;
+            continue;
+        }
+
+        if lower[index..].starts_with("antml:") {
+            index += "antml:".len();
+        }
+
+        for name in names {
+            if lower[index..].starts_with(name) && tag_name_boundary(&lower, index + name.len()) {
+                let end = lower[index..]
+                    .find('>')
+                    .map(|relative_end| index + relative_end + 1)?;
+                return Some(SimpleTag {
+                    start,
+                    end,
+                    name: (*name).to_string(),
+                });
+            }
+        }
+        search = start + 1;
+    }
+    None
+}
+
+fn skip_ascii_whitespace(value: &str, index: &mut usize) {
+    while value
+        .as_bytes()
+        .get(*index)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        *index += 1;
+    }
+}
+
+fn tag_name_boundary(value: &str, index: usize) -> bool {
+    value
+        .as_bytes()
+        .get(index)
+        .map(|byte| byte.is_ascii_whitespace() || matches!(byte, b'>' | b'/'))
+        .unwrap_or(true)
+}
+
 async fn send_telegram_output(
     config: &Config,
     chat_id: &str,
@@ -1431,5 +1758,58 @@ mod tests {
         let chunks = chunk_escaped_markdown_v2(&"_".repeat(10), 5);
 
         assert_eq!(chunks, vec![r"\_\_".to_string(); 5]);
+    }
+
+    #[test]
+    fn assistant_visible_text_prefers_final_and_strips_reasoning() {
+        let text = "draft <think>private reasoning</think><final>Visible answer</final>";
+
+        assert_eq!(assistant_visible_text(text), "Visible answer");
+    }
+
+    #[test]
+    fn assistant_visible_text_preserves_reasoning_tags_inside_code_fences() {
+        let text = "Visible\n```xml\n<think>literal</think>\n```\n<think>hidden</think>";
+
+        assert_eq!(
+            assistant_visible_text(text),
+            "Visible\n```xml\n<think>literal</think>\n```\n"
+        );
+    }
+
+    #[test]
+    fn extracts_and_removes_media_markers() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let image = temp.path().join("screen.png");
+        std::fs::write(&image, b"not really a png").expect("write image");
+        let text = format!("Here\nMEDIA:{}\nDone", image.display());
+
+        assert_eq!(
+            extract_outbound_media_paths(&text, temp.path()),
+            vec![image]
+        );
+        assert_eq!(remove_media_markers(&text), "Here\nDone");
+    }
+
+    #[test]
+    fn extracts_home_and_relative_media_paths() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let image = temp.path().join("relative.jpg");
+        std::fs::write(&image, b"jpg").expect("write image");
+
+        assert_eq!(
+            extract_outbound_media_paths("MEDIA:./relative.jpg", temp.path()),
+            vec![image]
+        );
+    }
+
+    #[test]
+    fn extracts_plain_local_image_paths_as_fallback() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let image = temp.path().join("plain.png");
+        std::fs::write(&image, b"png").expect("write image");
+        let text = format!("saved at `{}`", image.display());
+
+        assert_eq!(extract_plain_image_paths(&text, temp.path()), vec![image]);
     }
 }

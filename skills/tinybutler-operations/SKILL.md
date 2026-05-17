@@ -101,6 +101,23 @@ tinybutler telegram --document /path/to/file --caption 'MarkdownV2 caption'
 Send a photo or document with an optional MarkdownV2 caption. Use documents for
 large logs, scripts, reports, and arbitrary text blocks.
 
+When you are talking through the TinyButler Telegram chat bridge and need to
+return an image or screenshot, create a local file and either call
+`tinybutler telegram --photo <path> --caption '<short caption>'` directly or put
+`MEDIA:<path>` on its own line in your final answer. TinyButler removes the
+`MEDIA:` marker from visible text and uploads supported images to Telegram. For
+a current Linux desktop screenshot, use the helper when it exists:
+
+```bash
+python3 /home/wenyuan/linux_dotfiles/skills/screenshot/scripts/take_screenshot.py --mode temp
+```
+
+Then send the printed PNG path with `tinybutler telegram --photo` or `MEDIA:`.
+TinyButler can also detect an existing local image path in the final answer as a
+fallback, but `MEDIA:<path>` is the preferred explicit protocol because it avoids
+ambiguity.
+Do not expose hidden chain-of-thought or scratchpad content in Telegram replies.
+
 Operational guidance:
 
 - Telegram secrets live only in `~/.tinybutler/config.yaml`.
