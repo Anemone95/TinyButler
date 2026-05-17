@@ -245,10 +245,6 @@ async fn run_task_selector_action(
         }
         "enable" => scheduler.set_task_enabled_by_name(task_name, true).await,
         "disable" => scheduler.set_task_enabled_by_name(task_name, false).await,
-        "exit" | "q" => {
-            println!("exited");
-            Ok(())
-        }
         other => bail!("unknown task action: {other}"),
     }
 }
@@ -279,7 +275,8 @@ async fn run_interactive_task_selector(scheduler: &Scheduler) -> Result<()> {
     let mut selected_action = 0usize;
     loop {
         let detail = scheduler.task_detail_text(&task_name).await?;
-        let actions = scheduler.task_selector_action_labels(&task_name).await?;
+        let mut actions = scheduler.task_selector_action_labels(&task_name).await?;
+        actions.push("Back".to_string());
         let action_index = select_terminal_option(
             &mut stdout,
             &format!("Task: {task_name}"),
@@ -288,7 +285,7 @@ async fn run_interactive_task_selector(scheduler: &Scheduler) -> Result<()> {
             &mut selected_action,
         )?;
         let action = &actions[action_index];
-        if action == "exit" {
+        if action == "Back" {
             return Ok(());
         }
         if action == "status" {

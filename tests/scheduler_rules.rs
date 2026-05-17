@@ -86,3 +86,27 @@ fn notification_rules_match_task_type_and_result() {
     assert!(scheduler.should_notify(&task(TaskType::Command), &outcome("success", "ok")));
     assert!(scheduler.should_notify(&task(TaskType::Command), &outcome("failed", "")));
 }
+
+#[tokio::test]
+async fn task_action_labels_do_not_include_exit() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let task_dir = temp.path().join("tasks/demo");
+    std::fs::create_dir_all(&task_dir).expect("task dir");
+    std::fs::write(
+        task_dir.join("task.yaml"),
+        "name: demo\nenabled: true\nschedule: \"*/10 * * * *\"\ntype: command\n",
+    )
+    .expect("task yaml");
+
+    let scheduler = Scheduler::new(Config {
+        home: temp.path().to_path_buf(),
+        telegram: Default::default(),
+        code_agents: Default::default(),
+    });
+
+    let actions = scheduler
+        .task_selector_action_labels("demo")
+        .await
+        .expect("action labels");
+    assert_eq!(actions, ["status", "run", "disable"]);
+}

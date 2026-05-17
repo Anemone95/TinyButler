@@ -188,27 +188,22 @@ impl Scheduler {
         } else {
             actions.push("enable".to_string());
         }
-        actions.push("exit".to_string());
         Ok(actions)
     }
 
     /// Build the selected-task detail text shown before action choices.
     pub async fn task_detail_text(&self, name: &str) -> Result<String> {
         let task = self.find_task(name).await?;
-        let task_yaml_path = task.task_yaml_path();
-        let task_yaml = fs::read_to_string(&task_yaml_path)
-            .await
-            .with_context(|| format!("failed to read {}", task_yaml_path.display()))?;
-
-        let mut output = format!(
-            "**Task:** `{}`\n\n**task.yaml:** `{}`\n{}\n\n**schedule:** {}\n",
+        Ok(format!(
+            "**Task:** `{}`\n\n**enabled:** `{}`\n**type:** `{:?}`\n**runner:** `{}`\n**schedule:** {}\n**timeout:** `{}s`\n**session:** `{:?}`",
             task.name,
-            task_yaml_path.display(),
-            markdown_code_fence("yaml", task_yaml.trim_end()),
+            task.enabled,
+            task.task_type,
+            task.runner_label(),
             format_schedule_for_display(&task.schedule),
-        );
-        output.push_str(&self.task_execution_file_preview(&task).await);
-        Ok(output)
+            task.timeout,
+            task.session,
+        ))
     }
 
     /// Run one task immediately by task name or task directory name.
@@ -251,16 +246,25 @@ impl Scheduler {
 
     /// Build task-status text that can be printed locally or sent to Telegram.
     pub async fn task_status_text(&self, name: &str) -> Result<String> {
-        let mut output = self.task_detail_text(name).await?;
         let task = self.find_task(name).await?;
         let state = TaskState::load(&task.state_path()).await?;
-        let state_path = task.state_path();
-        output.push_str(&format!(
-            "\n\n**Task status:** `{}`\n\n**state.json:** `{}`\n{}",
+        let mut output = format!(
+            "**Task status:** `{}`\n\n**last_status:** `{}`\n**last_exit_code:** `{}`\n**last_run_at:** `{}`\n**next_run_at:** `{}`\n**running:** `{}`\n**run_count:** `{}`\n**failure_count:** `{}`\n**session_id:** `{}`\n**schedule_expr:** `{}`\n**last_log:** `{}`",
             task.name,
-            state_path.display(),
-            markdown_code_fence("json", &serde_json::to_string_pretty(&state)?),
-        ));
+            state.last_status.as_deref().unwrap_or("-"),
+            state
+                .last_exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            state.last_run_at.as_deref().unwrap_or("-"),
+            state.next_run_at.as_deref().unwrap_or("-"),
+            state.running,
+            state.run_count,
+            state.failure_count,
+            state.session_id.as_deref().unwrap_or("-"),
+            state.schedule_expr.as_deref().unwrap_or("-"),
+            state.last_log.as_deref().unwrap_or("-"),
+        );
 
         if let Some(log) = state.last_log.as_deref() {
             let log_path = task.dir.join(log);
@@ -279,28 +283,6 @@ impl Scheduler {
         }
 
         Ok(output)
-    }
-
-    /// Return the task-owned prompt or shell script content for status output.
-    async fn task_execution_file_preview(&self, task: &Task) -> String {
-        let (label, path, info) = match task.task_type {
-            TaskType::Agent => ("agent.md", task.agent_path(), "markdown"),
-            TaskType::Command => ("run.sh", task.run_script_path(), "bash"),
-        };
-
-        match fs::read_to_string(&path).await {
-            Ok(text) => format!(
-                "\n\n**{}:** `{}`\n{}",
-                label,
-                path.display(),
-                markdown_code_fence(info, text.trim_end())
-            ),
-            Err(err) => format!(
-                "\n\n**{}:** `{}`\nfailed to read: {err:#}",
-                label,
-                path.display()
-            ),
-        }
     }
 
     async fn tick(&self) -> Result<()> {

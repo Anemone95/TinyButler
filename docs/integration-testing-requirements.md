@@ -33,7 +33,7 @@ target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test task st
 rm -rf /home/wenyuan/TinyButler/.tinybutler-test
 ```
 
-Expected result: `check` succeeds, `tasks` opens or prints the initialized example tasks depending on terminal context, `task list` prints script-friendly task summaries, and `task status smoke-task` prints task detail plus `state.json`. Do not use old low-level `run`, `state`, or `logs` commands for documented behavior checks.
+Expected result: `check` succeeds, `tasks` opens or prints the initialized example tasks depending on terminal context, `task list` prints script-friendly task summaries, and `task status smoke-task` prints formatted runtime state. Do not use old low-level `run`, `state`, or `logs` commands for documented behavior checks.
 
 ## Local Tasks Menu
 
@@ -49,9 +49,9 @@ target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-menu-test ta
 In the menu:
 
 - Select `regular-check`.
-- Confirm the detail view shows `task.yaml`, the human-readable schedule, and `run.sh`.
+- Confirm the detail view shows formatted task fields and the human-readable schedule, without raw task definition or script content.
 - Choose `run`; confirm it finishes with `success`.
-- Choose `status`; confirm `state.json` and latest-log preview are shown.
+- Choose `status`; confirm formatted runtime state and latest-log preview are shown.
 - Choose `disable`; confirm the action changes to `enable`.
 - Choose `enable`; confirm the action changes back to `disable`.
 - Quit with `q`.
@@ -146,7 +146,7 @@ At minimum, cover scheduled agent `args` and `resume_args` with a fake local run
 - Add a `fake-agent` runner under temporary `config.yaml`.
 - Create an agent task with `session: reuse`.
 - Run it once through `tinybutler tasks`; confirm `state.json` stores `session-fresh`.
-- Inspect it with `tinybutler task status <task>`; confirm the output shows task detail, `state.json`, and latest-log preview.
+- Inspect it with `tinybutler task status <task>`; confirm the output shows formatted runtime state and latest-log preview.
 - Run it again; confirm logs show resume with `session-fresh` and `state.json` stores `session-resumed`.
 
 When real credentials and time allow, test each configured real runner:

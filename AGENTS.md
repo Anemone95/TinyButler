@@ -43,7 +43,7 @@ tinybutler telegram --attachment <path>        # send a Telegram attachment with
 
 tinybutler tasks                               # open the task selector
 tinybutler task list                           # print task summaries for scripts and agents
-tinybutler task status <task>                  # print task details, state, and latest log preview
+tinybutler task status <task>                  # print formatted runtime state and latest log preview
 
 tinybutler chat new                            # start a local interactive code-agent chat session
 tinybutler chat session                        # list and resume a local interactive chat session

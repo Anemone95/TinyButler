@@ -87,23 +87,22 @@ Task behavior starts from local CLI commands. TinyButler provides a task selecto
 | --- | --- | --- |
 | `tinybutler tasks` | `/tasks` | Open the task selector |
 | `tinybutler task list` | none | Print task summaries |
-| `tinybutler task status <task>` | none | Print task details, `state.json`, and the latest-log preview |
+| `tinybutler task status <task>` | none | Print formatted runtime state and the latest-log preview |
 
-`tinybutler tasks` lists task names and lets the user choose one with the keyboard. The local selector should support up/down navigation and an explicit exit option.
+`tinybutler tasks` lists task names and lets the user choose one with the keyboard. The local selector should support up/down navigation and keyboard cancellation.
 
 `/tasks` shows the same task list as Telegram buttons. Selecting a task opens the task detail view.
 
-After a task is selected, TinyButler first shows task details: `task.yaml`, the human-readable schedule description from `croner`, and either `agent.md` or `run.sh` content.
+After a task is selected, TinyButler first shows task details formatted as Markdown from the parsed task definition, including name, enabled state, type, runner, schedule, timeout, and session mode. It must not show raw task definition, prompt, or script file contents in the Telegram task menu.
 
 The selected-task view then offers these actions:
 
-- `status`: show `state.json` and a latest-log preview when available.
+- `status`: show only formatted runtime state fields and a latest-log preview when available.
 - `run`: run the selected task once.
 - `enable`: show only when the task is disabled; set `enabled: true`.
 - `disable`: show only when the task is enabled; set `enabled: false`.
-- `exit`: leave the task selector.
 
-In CLI or agent environments, use `tinybutler task list` for a stable task summary and `tinybutler task status <task>` for task detail, current state, and latest-log preview. Task-owned files can also be inspected directly from `~/.tinybutler/tasks/<task-name>/` when lower-level file access is useful.
+In CLI or agent environments, use `tinybutler task list` for a stable task summary and `tinybutler task status <task>` for current state and latest-log preview. Task-owned files can also be inspected directly from `~/.tinybutler/tasks/<task-name>/` when lower-level file access is useful.
 
 ## Scheduler Loop
 

@@ -400,7 +400,6 @@ async fn handle_task_action_callback(
                 .await?;
             send_task_detail_menu(config, chat_id, &scheduler, index, &task_name).await
         }
-        "exit" => send_markdown_text_to_chat(config, chat_id, "Exited task selector.").await,
         _ => send_markdown_text_to_chat(config, chat_id, "Stale TinyButler selection").await,
     }
 }

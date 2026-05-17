@@ -340,8 +340,9 @@ fn task_run_and_status_record_latest_log() {
     let status = run_tinybutler_with_input(home, &["tasks"], "regular-check\nstatus\n");
     assert!(status.status.success(), "{}", stderr(&status));
     let out = stdout(&status);
-    assert!(out.contains("last_status"));
-    assert!(out.contains("**run.sh:**"));
+    assert!(out.contains("**last_status:** `success`"));
+    assert!(!out.contains("**run.sh:**"));
+    assert!(!out.contains("**state.json:**"));
     assert!(out.contains("regular-check ok:"));
     assert!(out.contains("**latest_log_first_20_lines:**"));
 }
@@ -371,21 +372,23 @@ fn task_run_maintains_monthly_log_archives() {
 }
 
 #[test]
-fn agent_status_shows_prompt_content() {
+fn selected_task_detail_formats_task_fields_without_file_contents() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
     let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let status = run_tinybutler_with_input(home, &["tasks"], "smoke-task\nstatus\n");
-    assert!(status.status.success(), "{}", stderr(&status));
-    let out = stdout(&status);
+    let detail = run_tinybutler_with_input(home, &["tasks"], "smoke-task\n");
+    assert!(detail.status.success(), "{}", stderr(&detail));
+    let out = stdout(&detail);
 
-    assert!(out.contains("**agent.md:**"));
+    assert!(out.contains("**Task:** `smoke-task`"));
+    assert!(out.contains("**type:** `Agent`"));
     assert!(out.contains("**schedule:** At 09:00. (0 9 * * *)"));
-    assert!(out.contains("Inspect this task directory"));
-    assert!(out.contains("**state.json:**"));
+    assert!(!out.contains("**agent.md:**"));
+    assert!(!out.contains("**task.yaml:**"));
+    assert!(!out.contains("Inspect this task directory"));
 }
 
 #[test]
@@ -425,9 +428,10 @@ fn task_list_and_status_are_script_friendly_read_only_commands() {
     let status = run_tinybutler(home, &["task", "status", "smoke-task"]);
     assert!(status.status.success(), "{}", stderr(&status));
     let out = stdout(&status);
-    assert!(out.contains("**Task:** `smoke-task`"));
-    assert!(out.contains("**agent.md:**"));
-    assert!(out.contains("**state.json:**"));
+    assert!(out.contains("**Task status:** `smoke-task`"));
+    assert!(out.contains("**last_status:**"));
+    assert!(!out.contains("**agent.md:**"));
+    assert!(!out.contains("**state.json:**"));
 }
 
 #[test]
