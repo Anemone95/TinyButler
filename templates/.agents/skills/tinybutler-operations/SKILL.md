@@ -110,6 +110,9 @@ Operational guidance:
   inputs converted to Telegram MarkdownV2 by TinyButler.
 - Daemon-generated summaries, shell task summaries, and chat-bridge replies are
   ordinary Markdown inputs converted to Telegram MarkdownV2 by TinyButler.
+- Shell command tasks must print Markdown text on stdout. Non-empty stdout may
+  become the Telegram task summary, so write concise Markdown and avoid
+  terminal-only formatting or raw control sequences.
 - Agent tasks may call `tinybutler telegram ...` themselves when a notification is
   useful. The daemon does not auto-notify successful agent tasks.
 - The daemon sends fallback Telegram notifications for task failures, timeouts,
@@ -296,10 +299,11 @@ timeout: 1800
 #!/usr/bin/env bash
 set -euo pipefail
 
-printf 'regular-check ok: %s\n' "$(date --iso-8601=seconds)"
+printf '**regular-check ok:** `%s`\n' "$(date --iso-8601=seconds)"
 ```
 
-Command tasks must not define `runner`.
+Command tasks must not define `runner`. Write stdout as Markdown text because
+TinyButler may use non-empty stdout directly as the Telegram task summary.
 
 ## Agent Task Template
 

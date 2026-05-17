@@ -12,7 +12,7 @@ SERVICE_FILE := $(SYSTEMD_USER_DIR)/$(SERVICE_NAME)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build fmt check test clippy verify install install-skills uninstall service-status sync syncdoc
+.PHONY: build fmt check test clippy verify install install-skills syncskill uninstall service-status sync syncdoc
 
 # Build the debug binary for local development.
 build:
@@ -87,14 +87,22 @@ install:
 install-skills:
 	install -d "$(TINYBUTLER_SKILLS_DIR)"
 	@rm -rf "$(HOME)/.codex/skills/tinybutler-operations"
-	@for skill in "$(TINYBUTLER_SKILL_SOURCE_DIR)"/*; do \
+	@set -e; \
+	for skill in "$(TINYBUTLER_SKILL_SOURCE_DIR)"/*; do \
 		if [ -d "$$skill" ]; then \
 			name="$$(basename "$$skill")"; \
-			rm -rf "$(TINYBUTLER_SKILLS_DIR)/$$name"; \
-			cp -R "$$skill" "$(TINYBUTLER_SKILLS_DIR)/$$name"; \
-			printf '%s\n' "Installed TinyButler skill $(TINYBUTLER_SKILLS_DIR)/$$name"; \
+			target="$(TINYBUTLER_SKILLS_DIR)/$$name"; \
+			rm -rf "$$target"; \
+			cp -R "$$skill" "$$target"; \
+			printf '%s\n' "Installed TinyButler skill $$target"; \
 		fi; \
 	done
+
+# Re-copy project-owned skills and restart the installed TinyButler daemon.
+syncskill:
+	$(MAKE) install-skills
+	systemctl --user restart "$(SERVICE_NAME)"
+	@printf '%s\n' "Synced TinyButler skills and restarted $(SERVICE_NAME)"
 
 # Stop and remove the user-level systemd daemon and installed binary.
 uninstall:

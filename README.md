@@ -26,6 +26,8 @@ make install
 make install CARGO_INSTALL_ARGS='--root ~/.local --force'
 ```
 
+After editing skill templates, run `make syncskill` to copy `templates/.agents/skills/` into `~/.tinybutler/.agents/skills/` and restart the TinyButler user service.
+
 ## Runtime Layout
 
 ```text
@@ -111,7 +113,7 @@ telegram:
   chat_id: "123456789"
 ```
 
-TinyButler uses Telegram Bot HTTP API calls. `tinybutler telegram '<message>'`, attachment captions, compact daemon-generated summaries, shell task summaries, and chat-bridge code-agent replies are treated as ordinary Markdown and converted to Telegram MarkdownV2 before delivery. `tinybutler telegram --attachment <path>` chooses a Telegram attachment display from the file type and falls back to document-style delivery for ordinary files. Send arbitrary logs and large text as documents. Agent tasks may call `tinybutler telegram ...` themselves when they want to notify. The daemon sends fallback notifications for failures, and shell tasks notify when stdout is non-empty or when the task fails. The daemon stores Telegram long-polling offset state in `~/.tinybutler/telegram_state.json`.
+TinyButler uses Telegram Bot HTTP API calls. `tinybutler telegram '<message>'`, attachment captions, compact daemon-generated summaries, shell task summaries, and chat-bridge code-agent replies are treated as ordinary Markdown and converted to Telegram MarkdownV2 before delivery. Shell task stdout should be concise Markdown text because non-empty stdout may be sent as the task summary. `tinybutler telegram --attachment <path>` chooses a Telegram attachment display from the file type and falls back to document-style delivery for ordinary files. Send arbitrary logs and large text as documents. Agent tasks may call `tinybutler telegram ...` themselves when they want to notify. The daemon sends fallback notifications for failures, and shell tasks notify when stdout is non-empty or when the task fails. The daemon stores Telegram long-polling offset state in `~/.tinybutler/telegram_state.json`.
 
 When `tinybutler daemon` starts with Telegram configured, it sends a restart notification and refreshes the bot slash-command menu for the configured chat so clients show the current command names and compact descriptions.
 
