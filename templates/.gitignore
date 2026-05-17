@@ -1,6 +1,3 @@
-# Local machine config may contain Telegram tokens and runner credentials.
-/config.yaml
-
 # TinyButler-owned runtime state.
 /tinybutler.log
 /telegram_state.json

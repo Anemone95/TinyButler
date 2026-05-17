@@ -121,7 +121,7 @@ fn init_then_check_creates_valid_home() {
     let gitignore = home.join(".gitignore");
     assert!(gitignore.exists(), "init should install home .gitignore");
     let gitignore_text = std::fs::read_to_string(&gitignore).expect("home .gitignore");
-    assert!(gitignore_text.contains("/config.yaml"));
+    assert!(!gitignore_text.contains("/config.yaml"));
     assert!(gitignore_text.contains("/tasks/*/logs/"));
     assert!(gitignore_text.contains("/tasks/*/state.json"));
 
