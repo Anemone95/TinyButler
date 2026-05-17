@@ -10,6 +10,8 @@ TinyButler uses one Telegram-facing reply delivery path for TinyButler's own rep
 
 TinyButler output is authored as Markdown, whether it is printed to the CLI or sent to Telegram, and whether it comes from TinyButler itself or from task output summaries.
 
+Shell command task stdout must also be authored as Markdown text. The daemon may use that stdout directly as a Telegram notification summary when it is non-empty, so shell scripts should print concise Markdown rather than terminal-only formatting or raw control sequences.
+
 Telegram parse mode is `MarkdownV2`, so Telegram-bound Markdown is converted to safe Telegram MarkdownV2 before Bot API delivery.
 
 This conversion applies to `tinybutler telegram` text messages, attachment captions, command/status/error messages, dynamic task names, paths, logs, prompts inserted into templates, shell task summaries, and chat-bridge code-agent replies.

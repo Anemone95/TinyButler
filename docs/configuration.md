@@ -18,7 +18,7 @@ TinyButler stores local configuration and runtime files under `~/.tinybutler/` b
   .gitignore            # ignore template for logs and TinyButler-owned runtime files
 ```
 
-`tasks/*` is owned by [tasks.md](tasks.md). `telegram_state.json` is owned by [telegram-ingress.md](telegram-ingress.md). `chat_state.json` and `chat.lock` are owned by [chatbridge.md](chatbridge.md). `.agents/skills/*` is refreshed from `templates/.agents/skills/` on `tinybutler init` so code agents launched from the TinyButler home can discover the TinyButler operation skill. Other template files are copied only when missing. `.gitignore` is copied from `templates/.gitignore` and is a configuration-owned ignore template for files that should not be managed by git.
+`tasks/*` is owned by [tasks.md](tasks.md). `telegram_state.json` is owned by [telegram-ingress.md](telegram-ingress.md). `chat_state.json` and `chat.lock` are owned by [chatbridge.md](chatbridge.md). `.agents/skills/*` is refreshed from `templates/.agents/skills/` on `tinybutler init` so code agents launched from the TinyButler home can discover the TinyButler operation skill. Source-tree `make syncskill` copies project skills from `templates/.agents/skills/` into the TinyButler home and restarts the TinyButler user service. Other template files are copied only when missing. `.gitignore` is copied from `templates/.gitignore` and is a configuration-owned ignore template for files that should not be managed by git.
 
 ## Config File
 
