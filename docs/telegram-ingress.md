@@ -45,7 +45,7 @@ The bot also handles `/help` for the configured chat.
 
 Telegram Bot API command names allow only lowercase English letters, digits, and underscores.
 
-Use underscore command names such as `/task_list` for multiword commands.
+Use underscore command names for multiword commands.
 
 Telegram bot menu descriptions should be short and must not include the project name, so the mobile command menu stays compact.
 

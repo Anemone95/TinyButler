@@ -41,11 +41,7 @@ tinybutler check                               # validate TinyButler-controlled 
 tinybutler telegram '<message>'                # send a Telegram Markdown-authored message
 tinybutler telegram --attachment <path>        # send a Telegram attachment with an optional caption
 
-tinybutler task list                           # list all tasks and their latest status
-tinybutler task run <task>                     # run one task immediately
-tinybutler task status <task>                  # show task details, state, and log preview
-tinybutler task enable <task>                  # set enabled: true in task.yaml
-tinybutler task disable <task>                 # set enabled: false in task.yaml
+tinybutler tasks                               # open the task selector
 
 tinybutler chat new                            # start a local interactive code-agent chat session
 tinybutler chat session                        # list and resume a local interactive chat session
@@ -79,12 +75,10 @@ TinyButler/
 
 ## Design Notes
 
-- [docs/configuration.md](docs/configuration.md) owns the TinyButler home layout and local config boundaries.
-- [docs/code-agents.md](docs/code-agents.md) owns `code_agents.<runner>` configuration, placeholders, and runner flags.
+- [docs/configuration.md](docs/configuration.md) owns the TinyButler home layout, local config boundaries, and `code_agents.<runner>` configuration.
 - [docs/telegram-ingress.md](docs/telegram-ingress.md) owns inbound Telegram polling, command routing, authorization, and bot menu registration.
 - [docs/markdown-message.md](docs/markdown-message.md) owns outbound Telegram Markdown conversion, attachment delivery, and `ATTACH:` directives.
-- [docs/tasks.md](docs/tasks.md) owns task file ownership, `task.yaml`, and task command output.
-- [docs/scheduler.md](docs/scheduler.md) owns daemon scheduling, due calculation, task state, locking, timeouts, notifications, and log retention.
+- [docs/tasks.md](docs/tasks.md) owns task files, `task.yaml`, task commands, scheduling, task state, notifications, and log retention.
 - [docs/chatbridge.md](docs/chatbridge.md) owns the interactive chat bridge behavior, state machine, and adapter architecture.
 
 ## Testing
@@ -106,9 +100,7 @@ For behavior changes, also run a temporary-home smoke test through the public ta
 rm -rf /home/wenyuan/TinyButler/.tinybutler-test
 cargo run -- --home /home/wenyuan/TinyButler/.tinybutler-test init
 target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test check
-target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test task list
-target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test task run regular-check
-target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test task status regular-check
+target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test tasks
 rm -rf /home/wenyuan/TinyButler/.tinybutler-test
 ```
 
