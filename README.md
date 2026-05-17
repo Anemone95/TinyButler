@@ -60,6 +60,8 @@ make install CARGO_INSTALL_ARGS='--root ~/.local --force'
 
 `task.yaml`, `agent.md`, and `run.sh` are task-owned. `state.json`, `logs/`, `.tinybutler.lock`, `~/.tinybutler/telegram_state.json`, `~/.tinybutler/chat_state.json`, and `~/.tinybutler/chat.lock` are daemon-owned. `data/` belongs to the task execution.
 
+Task logs are retained by calendar month. TinyButler keeps the current month plus the previous five months, compresses completed retained months into `logs/YYYY-MM.tgz`, and deletes older raw logs and archives.
+
 ## Task Files
 
 Agent task:
@@ -95,20 +97,15 @@ tinybutler init
 tinybutler daemon
 tinybutler check
 tinybutler telegram '<message>'
-tinybutler telegram --photo <path> --caption '<message>'
-tinybutler telegram --document <path> --caption '<message>'
-tinybutler task list
-tinybutler task run <task>
-tinybutler task status <task>
-tinybutler task enable <task>
-tinybutler task disable <task>
+tinybutler telegram --attachment <path> --caption '<message>'
+tinybutler tasks
 tinybutler chat new
 tinybutler chat session
 ```
 
-`tinybutler check` validates local config and task definitions. `tinybutler task status <task>` shows task details, current state, and the first 20 lines of the latest log.
+`tinybutler check` validates local config and task definitions. `tinybutler tasks` opens the task selector, where you can inspect task details, run a task once, view state and latest-log previews, and enable or disable the selected task. In non-interactive command contexts it prints the task list and exits.
 
-`tinybutler chat new` starts a local REPL for an interactive Codex chat session. `tinybutler chat session` resumes a previous session. Use `/exit` to detach and Ctrl+C to abort an active turn. Local REPL sessions tell the agent to print local artifact paths; Telegram sessions tell the agent it is behind the Telegram bridge and can use Telegram media delivery.
+`tinybutler chat new` starts a local REPL for an interactive Codex chat session. `tinybutler chat session` resumes a previous session. Use `/exit` to detach and Ctrl+C to abort an active turn. Local REPL sessions tell the agent to print local artifact paths; Telegram sessions tell the agent it is behind the Telegram bridge and can use Telegram attachment delivery.
 
 ## Telegram
 
@@ -120,13 +117,13 @@ telegram:
   chat_id: "123456789"
 ```
 
-TinyButler uses Telegram Bot HTTP API calls. `tinybutler telegram '<message>'`, media captions, and compact daemon-generated summaries use MarkdownV2. TinyButler sanitizes CLI-authored Telegram messages before sending; still escape dynamic content deliberately when composing MarkdownV2. Send arbitrary logs and large text as documents. Agent tasks may call `tinybutler telegram ...` themselves when they want to notify. The daemon sends fallback notifications for failures, and shell tasks notify when stdout is non-empty or when the task fails. The daemon stores Telegram long-polling offset state in `~/.tinybutler/telegram_state.json`.
+TinyButler uses Telegram Bot HTTP API calls. `tinybutler telegram '<message>'`, attachment captions, compact daemon-generated summaries, shell task summaries, and chat-bridge code-agent replies are treated as ordinary Markdown and converted to Telegram MarkdownV2 before delivery. `tinybutler telegram --attachment <path>` chooses a Telegram attachment display from the file type and falls back to document-style delivery for ordinary files. Send arbitrary logs and large text as documents. Agent tasks may call `tinybutler telegram ...` themselves when they want to notify. The daemon sends fallback notifications for failures, and shell tasks notify when stdout is non-empty or when the task fails. The daemon stores Telegram long-polling offset state in `~/.tinybutler/telegram_state.json`.
 
 When `tinybutler daemon` starts with Telegram configured, it refreshes the bot slash-command menu for the configured chat so clients show the current command names and compact descriptions.
 
-When the daemon is running, Telegram also supports `/new`, `/session`, and `/abort` for the interactive code-agent chat bridge. `/new` opens a model menu, `/session` opens a resumable-session menu, and bare Telegram text is redirected to the active chat session after selection.
+When the daemon is running, Telegram supports `/tasks` for the task selector and `/new`, `/session`, and `/abort` for the interactive code-agent chat bridge. `/tasks` opens a task button menu, `/new` opens a model menu, `/session` opens a resumable-session menu, and bare Telegram text is redirected to the active chat session after selection.
 
-For chat-bridge media replies, a code agent can create a local image and include `MEDIA:<path>` on its own line in the final answer. TinyButler removes the marker from visible text and uploads supported image files to Telegram. As a compatibility fallback, TinyButler also detects existing local image paths in final replies and uploads them once. The bridge strips hidden reasoning tags from final replies so the chat focuses on the answer and delivered media.
+For chat-bridge attachment replies, a code agent can create a local artifact and include `ATTACH:<path>` on its own line in the final answer. TinyButler removes the marker from visible text and uploads supported files to Telegram using the most suitable attachment display. As a compatibility fallback, TinyButler also detects existing local image paths in final replies and uploads them once. The bridge strips hidden reasoning tags from final replies so the chat focuses on the answer and delivered attachments.
 
 ## Development
 

@@ -8,6 +8,7 @@ pub mod chat;
 pub mod config;
 pub mod cron_expr;
 pub mod lock;
+pub mod log_retention;
 pub mod runner;
 pub mod scheduler;
 pub mod state;

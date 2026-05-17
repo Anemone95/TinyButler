@@ -45,31 +45,14 @@ Start the scheduler loop. When Telegram is configured, the daemon also starts
 the Telegram long-polling command loop.
 
 ```bash
-tinybutler task list
+tinybutler tasks
 ```
 
-List all tasks with enabled state, type, runner, schedule description, latest
-state, next run time, and counters.
-
-```bash
-tinybutler task status <task>
-```
-
-Show one task's `task.yaml` fields, `agent.md` or `run.sh` content, latest
-`state.json`, and the first 20 lines of the latest log.
-
-```bash
-tinybutler task run <task>
-```
-
-Run one task immediately through the public task-management surface.
-
-```bash
-tinybutler task enable <task>
-tinybutler task disable <task>
-```
-
-Set `enabled: true` or `enabled: false` in the task's `task.yaml`.
+Open the task selector. In an interactive terminal, choose a task with the
+keyboard, inspect its `task.yaml` plus `agent.md` or `run.sh`, then choose
+`status`, `run`, `enable`, `disable`, or `exit`. In a non-interactive command
+context, `tinybutler tasks` prints all tasks with enabled state, type, runner,
+schedule description, latest state, next run time, and counters, then exits.
 
 ```bash
 tinybutler chat new
@@ -80,7 +63,7 @@ Start a local interactive code-agent chat session or resume a previous one.
 Choose a model/session from the prompt, then type messages. Use `/exit` to
 detach from the REPL without deleting the resumable session. Use Ctrl+C while a
 turn is running to abort that turn. Local REPL sessions should print local
-artifact paths; Telegram bridge sessions can use TinyButler's media delivery
+artifact paths; Telegram bridge sessions can use TinyButler's attachment delivery
 rules below.
 
 ## Telegram Notifications
@@ -88,35 +71,29 @@ rules below.
 Use Telegram for progress updates when operating remotely.
 
 ```bash
-tinybutler telegram 'MarkdownV2 *message* text'
+tinybutler telegram 'Markdown **message** text'
 ```
 
-Send a MarkdownV2 message to the configured Telegram chat. Escape dynamic
-content before inserting it into MarkdownV2. Put task names, paths, and other
-dynamic values in code spans when possible.
+Send an ordinary Markdown message to the configured Telegram chat. TinyButler
+converts it to Telegram MarkdownV2 before delivery. Put task names, paths, and
+other dynamic values in Markdown code spans when possible.
 
 ```bash
-tinybutler telegram --photo /path/to/image.png --caption 'MarkdownV2 caption'
-tinybutler telegram --document /path/to/file --caption 'MarkdownV2 caption'
+tinybutler telegram --attachment /path/to/file --caption 'Markdown caption'
 ```
 
-Send a photo or document with an optional MarkdownV2 caption. Use documents for
-large logs, scripts, reports, and arbitrary text blocks.
+Send an attachment with an optional Markdown caption. TinyButler chooses the
+Telegram display from the file type and falls back to document-style delivery for
+large logs, scripts, reports, and arbitrary files.
 
 When you are talking through the TinyButler Telegram chat bridge and need to
-return an image or screenshot, create a local file and either call
-`tinybutler telegram --photo <path> --caption '<short caption>'` directly or put
-`MEDIA:<path>` on its own line in your final answer. TinyButler removes the
-`MEDIA:` marker from visible text and uploads supported images to Telegram. For
-a current Linux desktop screenshot, use the helper when it exists:
-
-```bash
-python3 /home/wenyuan/linux_dotfiles/skills/screenshot/scripts/take_screenshot.py --mode temp
-```
-
-Then send the printed PNG path with `tinybutler telegram --photo` or `MEDIA:`.
+return an image, screenshot, or other artifact, create a local file and either
+call `tinybutler telegram --attachment <path> --caption '<short caption>'`
+directly or put `ATTACH:<path>` on its own line in your final answer.
+TinyButler removes the `ATTACH:` marker from visible text and uploads supported
+attachments to Telegram.
 TinyButler can also detect an existing local image path in the final answer as a
-fallback, but `MEDIA:<path>` is the preferred explicit protocol because it avoids
+fallback, but `ATTACH:<path>` is the preferred explicit protocol because it avoids
 ambiguity.
 Do not expose hidden chain-of-thought or scratchpad content in Telegram replies.
 
@@ -124,16 +101,10 @@ Operational guidance:
 
 - Telegram secrets live only in `~/.tinybutler/config.yaml`.
 - Never print, commit, or copy real bot tokens or chat ids into shared files.
-- CLI `tinybutler telegram ...` messages and captions are MarkdownV2-formatted.
-- TinyButler sanitizes CLI-authored Telegram text before sending so ordinary
-  punctuation does not break Telegram parsing.
-- Escape MarkdownV2 control characters in user-controlled text:
-
-  ```text
-  _ * [ ] ( ) ~ ` > # + - = | { } . ! \
-  ```
-- Daemon-generated compact summaries use Telegram MarkdownV2 internally and must
-  escape user-controlled content.
+- CLI `tinybutler telegram ...` messages and captions are ordinary Markdown
+  inputs converted to Telegram MarkdownV2 by TinyButler.
+- Daemon-generated summaries, shell task summaries, and chat-bridge replies are
+  ordinary Markdown inputs converted to Telegram MarkdownV2 by TinyButler.
 - Agent tasks may call `tinybutler telegram ...` themselves when a notification is
   useful. The daemon does not auto-notify successful agent tasks.
 - The daemon sends fallback Telegram notifications for task failures, timeouts,
@@ -145,20 +116,18 @@ Telegram ingress commands handled by the daemon:
 
 ```text
 /help
-/task_list
-/task_status <task>
-/task_run <task>
-/task_enable <task>
-/task_disable <task>
+/tasks
 /new
 /session
 /abort
 ```
 
-Use slash commands for task management. After `/new` or `/session` selects a
-code-agent session, bare text in the configured Telegram chat is redirected to
-that active session until it is replaced. `/abort` interrupts the active turn
-without deleting the resumable session.
+Use `/tasks` for task management. It opens a Telegram button menu, and selecting
+a task opens its detail view with `status`, `run`, `enable` or `disable`, and
+`exit` actions. After `/new` or `/session` selects a code-agent session, bare
+text in the configured Telegram chat is redirected to that active session until
+it is replaced. `/abort` interrupts the active turn without deleting the
+resumable session.
 
 ## Runtime Layout
 
@@ -201,6 +170,10 @@ Runtime-owned files:
 
 Do not manually edit runtime-owned files or `data/` unless explicitly debugging
 runtime state corruption or task output issues.
+
+TinyButler keeps task logs by calendar month: the current month plus the
+previous five months are retained, completed retained months are compressed into
+`logs/YYYY-MM.tgz`, and older raw logs and archives are deleted.
 
 ## Configuring TinyButler
 
@@ -383,26 +356,26 @@ When creating or changing a task:
 4. Inspect the task:
 
    ```bash
-   tinybutler task status <task-name>
+   tinybutler tasks
    ```
 
 5. Run the task manually when safe:
 
    ```bash
-   tinybutler task run <task-name>
+   tinybutler tasks
    ```
 
 6. Check the task list:
 
    ```bash
-   tinybutler task list
+   tinybutler tasks
    ```
 
 7. Send the result or attach a log if useful:
 
    ```bash
    tinybutler telegram 'TinyButler: task `<task-name>` updated and validated'
-   tinybutler telegram --document ~/.tinybutler/tasks/<task-name>/logs/<log>.log --caption 'latest log'
+   tinybutler telegram --attachment ~/.tinybutler/tasks/<task-name>/logs/<log>.log --caption 'latest log'
    ```
 
 ## Scheduler Semantics
@@ -410,9 +383,9 @@ When creating or changing a task:
 - TinyButler does not backfill missed scheduled runs.
 - On daemon startup or schedule change, `next_run_at` is recomputed as the first
   future occurrence after now.
-- Manual `tinybutler task run <task>` updates last-run fields and counters, but it
-  does not shift a future scheduled `next_run_at` unless the task was already
-  due.
+- Manual runs from the `tinybutler tasks` selector update last-run fields and
+  counters, but they do not shift a future scheduled `next_run_at` unless the
+  task was already due.
 - Task success, failure, timeout, and lock conflict all record state. Scheduled
   attempts advance `next_run_at`.
 - Existing task locks are reported as `Run Failure`. There is no queue,

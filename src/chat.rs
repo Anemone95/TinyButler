@@ -629,10 +629,10 @@ fn chat_bridge_instructions(context: ChatInstructionContext) -> String {
                 "You are connected to the user through TinyButler's Telegram chat bridge.",
             );
             instructions.push(
-                "When the user asks for an image, screenshot, or generated media, create a local file and make it deliverable. Prefer calling `tinybutler telegram --photo <path> --caption '<short caption>'` when you intentionally want to send it yourself.",
+                "When the user asks for an image, screenshot, or generated artifact, create a local file and make it deliverable. Prefer calling `tinybutler telegram --attachment <path> --caption '<short caption>'` when you intentionally want to send it yourself.",
             );
             instructions.push(
-                "If you cannot or do not call the TinyButler Telegram CLI directly, include `MEDIA:<path>` on its own line in the final answer. TinyButler will upload that file to Telegram and remove the marker from the visible text.",
+                "If you cannot or do not call the TinyButler Telegram CLI directly, include `ATTACH:<path>` on its own line in the final answer. TinyButler will upload that file to Telegram and remove the marker from the visible text.",
             );
         }
     }
@@ -758,13 +758,13 @@ mod tests {
     }
 
     #[test]
-    fn telegram_bridge_instructions_describe_media_delivery() {
+    fn telegram_bridge_instructions_describe_attachment_delivery() {
         let instructions = chat_bridge_instructions(ChatInstructionContext::Telegram);
 
         assert!(instructions.contains("TinyButler"));
         assert!(instructions.contains("Telegram chat bridge"));
-        assert!(instructions.contains("MEDIA:<path>"));
-        assert!(instructions.contains("tinybutler telegram --photo"));
+        assert!(instructions.contains("ATTACH:<path>"));
+        assert!(instructions.contains("tinybutler telegram --attachment"));
         assert!(instructions.contains("take_screenshot.py"));
     }
 
@@ -775,8 +775,8 @@ mod tests {
         assert!(instructions.contains("local terminal chat REPL"));
         assert!(instructions.contains("print the local file path"));
         assert!(!instructions.contains("Telegram chat bridge"));
-        assert!(!instructions.contains("MEDIA:<path>"));
-        assert!(!instructions.contains("tinybutler telegram --photo"));
+        assert!(!instructions.contains("ATTACH:<path>"));
+        assert!(!instructions.contains("tinybutler telegram --attachment"));
     }
 
     #[tokio::test]

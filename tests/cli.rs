@@ -4,10 +4,11 @@
 //! executable path so command parsing, init templates, check, and task commands
 //! are verified together.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
-use chrono::{Duration, Local};
+use chrono::{Datelike, Duration, Local, Months};
 use serde_json::json;
 
 /// Return the compiled TinyButler binary path provided by Cargo integration tests.
@@ -23,6 +24,26 @@ fn run_tinybutler(home: &Path, args: &[&str]) -> Output {
         .args(args)
         .output()
         .expect("tinybutler command should start")
+}
+
+/// Execute TinyButler with scripted stdin for non-interactive selectors.
+fn run_tinybutler_with_input(home: &Path, args: &[&str], input: &str) -> Output {
+    let mut child = Command::new(tinybutler_bin())
+        .arg("--home")
+        .arg(home)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("tinybutler command should start");
+    child
+        .stdin
+        .as_mut()
+        .expect("child stdin")
+        .write_all(input.as_bytes())
+        .expect("write selector input");
+    child.wait_with_output().expect("tinybutler output")
 }
 
 /// Convert command stdout into UTF-8 for readable assertions.
@@ -59,6 +80,30 @@ fn relative_files(root: &Path) -> Vec<PathBuf> {
 /// Convert command stderr into UTF-8 for readable failure messages.
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+/// Return a timestamped task-log file name in a month before the current month.
+fn log_file_name_months_ago(months_ago: u32) -> String {
+    let current_month = Local::now()
+        .date_naive()
+        .with_day(1)
+        .expect("current month start");
+    let month = current_month
+        .checked_sub_months(Months::new(months_ago))
+        .expect("shifted month");
+    format!("{}-{:02}-01T00-00-00.log", month.year(), month.month())
+}
+
+/// Return the monthly archive file name for a month before the current month.
+fn archive_file_name_months_ago(months_ago: u32) -> String {
+    let current_month = Local::now()
+        .date_naive()
+        .with_day(1)
+        .expect("current month start");
+    let month = current_month
+        .checked_sub_months(Months::new(months_ago))
+        .expect("shifted month");
+    format!("{}-{:02}.tgz", month.year(), month.month())
 }
 
 #[test]
@@ -257,16 +302,40 @@ fn task_run_and_status_record_latest_log() {
     let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let run = run_tinybutler(home, &["task", "run", "regular-check"]);
+    let run = run_tinybutler_with_input(home, &["tasks"], "regular-check\nrun\n");
     assert!(run.status.success(), "{}", stderr(&run));
 
-    let status = run_tinybutler(home, &["task", "status", "regular-check"]);
+    let status = run_tinybutler_with_input(home, &["tasks"], "regular-check\nstatus\n");
     assert!(status.status.success(), "{}", stderr(&status));
     let out = stdout(&status);
     assert!(out.contains("last_status"));
-    assert!(out.contains("shell_command:"));
+    assert!(out.contains("**run.sh:**"));
     assert!(out.contains("regular-check ok:"));
-    assert!(out.contains("latest_log_first_20_lines"));
+    assert!(out.contains("**latest_log_first_20_lines:**"));
+}
+
+#[test]
+fn task_run_maintains_monthly_log_archives() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let logs_dir = home.join("tasks/regular-check/logs");
+    std::fs::create_dir_all(&logs_dir).expect("logs dir");
+    let completed_log = log_file_name_months_ago(1);
+    let expired_log = log_file_name_months_ago(6);
+    let completed_archive = archive_file_name_months_ago(1);
+    std::fs::write(logs_dir.join(&completed_log), "completed month\n").expect("completed log");
+    std::fs::write(logs_dir.join(&expired_log), "expired month\n").expect("expired log");
+
+    let run = run_tinybutler_with_input(home, &["tasks"], "regular-check\nrun\n");
+    assert!(run.status.success(), "{}", stderr(&run));
+
+    assert!(logs_dir.join(completed_archive).exists());
+    assert!(!logs_dir.join(completed_log).exists());
+    assert!(!logs_dir.join(expired_log).exists());
 }
 
 #[test]
@@ -277,14 +346,14 @@ fn agent_status_shows_prompt_content() {
     let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let status = run_tinybutler(home, &["task", "status", "smoke-task"]);
+    let status = run_tinybutler_with_input(home, &["tasks"], "smoke-task\nstatus\n");
     assert!(status.status.success(), "{}", stderr(&status));
     let out = stdout(&status);
 
-    assert!(out.contains("agent_prompt:"));
-    assert!(out.contains("schedule: At 09:00. (0 9 * * *)"));
+    assert!(out.contains("**agent.md:**"));
+    assert!(out.contains("**schedule:** At 09:00. (0 9 * * *)"));
     assert!(out.contains("Inspect this task directory"));
-    assert!(out.contains("state:"));
+    assert!(out.contains("**state.json:**"));
 }
 
 #[test]
@@ -295,7 +364,7 @@ fn task_list_uses_chat_readable_multiline_blocks() {
     let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let list = run_tinybutler(home, &["task", "list"]);
+    let list = run_tinybutler(home, &["tasks"]);
     assert!(list.status.success(), "{}", stderr(&list));
     let out = stdout(&list);
 
@@ -310,6 +379,23 @@ fn task_list_uses_chat_readable_multiline_blocks() {
 }
 
 #[test]
+fn scripted_task_selector_rejects_zero_index() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let output = run_tinybutler_with_input(home, &["tasks"], "0\n");
+    assert!(!output.status.success(), "zero should not select a task");
+    assert!(
+        stderr(&output).contains("task selection is out of range"),
+        "stderr should mention out of range selection: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn task_enable_and_disable_update_task_yaml() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
@@ -317,7 +403,7 @@ fn task_enable_and_disable_update_task_yaml() {
     let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let disable = run_tinybutler(home, &["task", "disable", "regular-check"]);
+    let disable = run_tinybutler_with_input(home, &["tasks"], "regular-check\ndisable\n");
     assert!(disable.status.success(), "{}", stderr(&disable));
     assert!(stdout(&disable).contains("regular-check disabled"));
 
@@ -325,11 +411,11 @@ fn task_enable_and_disable_update_task_yaml() {
         std::fs::read_to_string(home.join("tasks/regular-check/task.yaml")).expect("task yaml");
     assert!(disabled_yaml.contains("enabled: false"));
 
-    let list = run_tinybutler(home, &["task", "list"]);
+    let list = run_tinybutler(home, &["tasks"]);
     assert!(list.status.success(), "{}", stderr(&list));
     assert!(stdout(&list).contains("regular-check\n  enabled: false"));
 
-    let enable = run_tinybutler(home, &["task", "enable", "regular-check"]);
+    let enable = run_tinybutler_with_input(home, &["tasks"], "regular-check\nenable\n");
     assert!(enable.status.success(), "{}", stderr(&enable));
     assert!(stdout(&enable).contains("regular-check enabled"));
 
@@ -361,7 +447,7 @@ fn manual_task_run_preserves_future_scheduled_next_run() {
     )
     .expect("write state");
 
-    let run = run_tinybutler(home, &["task", "run", "regular-check"]);
+    let run = run_tinybutler_with_input(home, &["tasks"], "regular-check\nrun\n");
     assert!(run.status.success(), "{}", stderr(&run));
 
     let state: serde_json::Value =
@@ -395,7 +481,7 @@ fn task_list_reconciles_state_when_schedule_changes() {
     )
     .expect("write state");
 
-    let list = run_tinybutler(home, &["task", "list"]);
+    let list = run_tinybutler(home, &["tasks"]);
     assert!(list.status.success(), "{}", stderr(&list));
 
     let state: serde_json::Value =
@@ -410,7 +496,7 @@ fn old_top_level_commands_are_not_public_cli() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    for command in ["scan", "run", "state", "logs"] {
+    for command in ["scan", "run", "state", "logs", "task"] {
         let output = run_tinybutler(home, &[command]);
         assert!(
             !output.status.success(),

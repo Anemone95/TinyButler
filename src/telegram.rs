@@ -14,6 +14,7 @@ use reqwest::multipart::{Form, Part};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use telegram_markdown_v2::{convert_with_strategy, UnsupportedTagsStrategy};
 use tokio::fs;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
@@ -37,33 +38,38 @@ pub enum IngressCommand {
     New,
     Session,
     Abort,
-    TaskList,
-    TaskRun(String),
-    TaskStatus(String),
-    TaskEnable(String),
-    TaskDisable(String),
+    Tasks,
     Unknown(String),
 }
 
 type AbortSender = oneshot::Sender<()>;
 type SharedAbort = Arc<Mutex<Option<AbortSender>>>;
 
-/// Send a MarkdownV2 text message to the configured chat.
+/// Send an ordinary Markdown text message to the configured chat.
 pub async fn send_text(config: &Config, text: &str) -> Result<()> {
     let chat_id = configured_chat_id(config)?;
-    send_markdown_text_to_chat(config, &chat_id, &sanitize_markdown_v2_message(text)).await
+    send_markdown_text_to_chat(config, &chat_id, text).await
 }
 
-/// Send a local image file as a Telegram photo.
-pub async fn send_photo(config: &Config, path: &Path, caption: Option<&str>) -> Result<()> {
+/// Send a local file using the Telegram attachment method that best fits its type.
+pub async fn send_attachment(config: &Config, path: &Path, caption: Option<&str>) -> Result<()> {
     let chat_id = configured_chat_id(config)?;
-    send_media_to_chat(config, "sendPhoto", "photo", &chat_id, path, caption).await
+    let attachment = classify_attachment(path);
+    send_media_to_chat(
+        config,
+        attachment.method,
+        attachment.field_name,
+        &chat_id,
+        path,
+        caption,
+    )
+    .await
 }
 
-/// Send a local file as a Telegram document.
-pub async fn send_document(config: &Config, path: &Path, caption: Option<&str>) -> Result<()> {
-    let chat_id = configured_chat_id(config)?;
-    send_media_to_chat(config, "sendDocument", "document", &chat_id, path, caption).await
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TelegramAttachment {
+    method: &'static str,
+    field_name: &'static str,
 }
 
 /// Send the scheduler's standard task-run notification message.
@@ -77,7 +83,7 @@ pub async fn notify_run(
     summary: &str,
 ) -> Result<()> {
     let mut text = format!(
-        "*TinyButler task:* {}\n*status:* {}\n*duration:* {}\n*log:* {}",
+        "**TinyButler task:** {}\n**status:** {}\n**duration:** {}\n**log:** {}",
         inline_code(task_name),
         inline_code(status),
         inline_code(&format!("{duration_seconds}s")),
@@ -85,13 +91,13 @@ pub async fn notify_run(
     );
     if let Some(code) = exit_code {
         text.push_str(&format!(
-            "\n*exit code:* {}",
+            "\n**exit code:** {}",
             inline_code(&code.to_string())
         ));
     }
     if !summary.trim().is_empty() {
-        text.push_str("\n\n*summary:*\n");
-        text.push_str(&code_block(&truncate(summary.trim(), 1200)));
+        text.push_str("\n\n**summary:**\n");
+        text.push_str(&truncate(summary.trim(), 1200));
     }
     let chat_id = configured_chat_id(config)?;
     send_markdown_text_to_chat(config, &chat_id, &text).await
@@ -130,7 +136,7 @@ pub async fn poll(config: Config) -> Result<()> {
                                         let _ = send_markdown_text_to_chat(
                                             &config,
                                             &message.chat.id.to_string(),
-                                            &format!("TinyButler command failed:\n{}", code_block(&truncate(&format!("{err:#}"), 1200))),
+                                            &format!("TinyButler command failed:\n{}", markdown_code_block(&truncate(&format!("{err:#}"), 1200))),
                                         ).await;
                                     }
                                     update_handled = true;
@@ -174,8 +180,7 @@ pub fn parse_ingress_command(text: &str) -> IngressCommand {
         return IngressCommand::Unknown(String::new());
     }
 
-    let mut parts = trimmed.split_whitespace();
-    let raw_command = parts.next().unwrap_or_default();
+    let raw_command = trimmed.split_whitespace().next().unwrap_or_default();
     if !raw_command.starts_with('/') {
         return IngressCommand::Unknown(trimmed.to_string());
     }
@@ -185,42 +190,12 @@ pub fn parse_ingress_command(text: &str) -> IngressCommand {
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let rest = parts.collect::<Vec<_>>().join(" ");
-
     match command.as_str() {
         "help" | "start" => IngressCommand::Help,
         "new" => IngressCommand::New,
         "session" => IngressCommand::Session,
         "abort" => IngressCommand::Abort,
-        "task_list" => IngressCommand::TaskList,
-        "task_run" => {
-            if rest.trim().is_empty() {
-                IngressCommand::Unknown("missing task name for /task_run".to_string())
-            } else {
-                IngressCommand::TaskRun(rest)
-            }
-        }
-        "task_status" => {
-            if rest.trim().is_empty() {
-                IngressCommand::Unknown("missing task name for /task_status".to_string())
-            } else {
-                IngressCommand::TaskStatus(rest)
-            }
-        }
-        "task_enable" => {
-            if rest.trim().is_empty() {
-                IngressCommand::Unknown("missing task name for /task_enable".to_string())
-            } else {
-                IngressCommand::TaskEnable(rest)
-            }
-        }
-        "task_disable" => {
-            if rest.trim().is_empty() {
-                IngressCommand::Unknown("missing task name for /task_disable".to_string())
-            } else {
-                IngressCommand::TaskDisable(rest)
-            }
-        }
+        "tasks" => IngressCommand::Tasks,
         _ => IngressCommand::Unknown(trimmed.to_string()),
     }
 }
@@ -249,7 +224,6 @@ async fn handle_command(
     text: &str,
 ) -> Result<()> {
     let command = parse_ingress_command(text);
-    let scheduler = Scheduler::new(config.clone());
     let response = match command {
         IngressCommand::Help => help_text(),
         IngressCommand::New => {
@@ -261,37 +235,8 @@ async fn handle_command(
         IngressCommand::Abort => {
             return handle_abort_command(config, abort_sender, chat_id).await;
         }
-        IngressCommand::TaskList => code_block(&truncate(&scheduler.task_list_text().await?, 3500)),
-        IngressCommand::TaskStatus(task) => code_block(&truncate(
-            &scheduler.task_status_text(task.trim()).await?,
-            3500,
-        )),
-        IngressCommand::TaskEnable(task) => {
-            let task_name = task.trim();
-            scheduler.set_task_enabled_by_name(task_name, true).await?;
-            format!("Task {} enabled", inline_code(task_name))
-        }
-        IngressCommand::TaskDisable(task) => {
-            let task_name = task.trim();
-            scheduler.set_task_enabled_by_name(task_name, false).await?;
-            format!("Task {} disabled", inline_code(task_name))
-        }
-        IngressCommand::TaskRun(task) => {
-            let task_name = task.trim();
-            send_markdown_text_to_chat(
-                config,
-                chat_id,
-                &format!("Running {}", inline_code(task_name)),
-            )
-            .await?;
-            let outcome = scheduler.run_task_by_name(task_name).await?;
-            format!(
-                "Task {} finished with {} in {}\n\n{}",
-                inline_code(task_name),
-                inline_code(&outcome.status),
-                inline_code(&format!("{}s", outcome.duration_seconds)),
-                code_block(&truncate(&outcome.summary, 2500))
-            )
+        IngressCommand::Tasks => {
+            return handle_tasks_command(config, chat_id).await;
         }
         IngressCommand::Unknown(text) => {
             if text.is_empty() {
@@ -310,54 +255,35 @@ async fn handle_command(
 
 fn help_text() -> String {
     [
-        escape_markdown_v2("TinyButler commands:"),
+        "**TinyButler commands:**".to_string(),
         format!(
             "{}: {}",
             inline_code("/new"),
-            escape_markdown_v2("start a code-agent chat session")
+            "start a code-agent chat session"
         ),
         format!(
             "{}: {}",
             inline_code("/session"),
-            escape_markdown_v2("resume a code-agent chat session")
+            "resume a code-agent chat session"
         ),
         format!(
             "{}: {}",
             inline_code("/abort"),
-            escape_markdown_v2("abort the active code-agent turn")
+            "abort the active code-agent turn"
         ),
-        format!(
-            "{}: {}",
-            inline_code("/task_list"),
-            escape_markdown_v2("list tasks")
-        ),
-        format!(
-            "{}: {}",
-            inline_code("/task_status <task>"),
-            escape_markdown_v2("show task status")
-        ),
-        format!(
-            "{}: {}",
-            inline_code("/task_run <task>"),
-            escape_markdown_v2("run one task now")
-        ),
-        format!(
-            "{}: {}",
-            inline_code("/task_enable <task>"),
-            escape_markdown_v2("enable one task")
-        ),
-        format!(
-            "{}: {}",
-            inline_code("/task_disable <task>"),
-            escape_markdown_v2("disable one task")
-        ),
-        format!(
-            "{}: {}",
-            inline_code("/help"),
-            escape_markdown_v2("show this help")
-        ),
+        format!("{}: {}", inline_code("/tasks"), "open the task selector"),
+        format!("{}: {}", inline_code("/help"), "show this help"),
     ]
     .join("\n")
+}
+
+async fn handle_tasks_command(config: &Config, chat_id: &str) -> Result<()> {
+    let scheduler = Scheduler::new(config.clone());
+    let tasks = scheduler.task_selector_items().await?;
+    if tasks.is_empty() {
+        return send_markdown_text_to_chat(config, chat_id, "No tasks found.").await;
+    }
+    send_task_index_menu(config, chat_id, "Select a task:", &tasks).await
 }
 
 async fn handle_new_command(config: &Config, chat_id: &str) -> Result<()> {
@@ -411,6 +337,197 @@ async fn handle_session_command(config: &Config, chat_id: &str) -> Result<()> {
             .collect(),
     )
     .await
+}
+
+async fn handle_task_callback(config: &Config, chat_id: &str, task_data: &str) -> Result<()> {
+    let scheduler = Scheduler::new(config.clone());
+    let selection = parse_task_callback_data(task_data)?;
+    let index = selection.index;
+    let task_name = task_name_for_callback_selection(&scheduler, selection).await?;
+    send_task_detail_menu(config, chat_id, &scheduler, index, &task_name).await
+}
+
+async fn handle_task_action_callback(
+    config: &Config,
+    chat_id: &str,
+    action_data: &str,
+) -> Result<()> {
+    let Some((action, task_data)) = action_data.split_once(':') else {
+        return send_markdown_text_to_chat(config, chat_id, "Stale TinyButler selection").await;
+    };
+    let scheduler = Scheduler::new(config.clone());
+    let selection = parse_task_callback_data(task_data)?;
+    let index = selection.index;
+    let task_name = task_name_for_callback_selection(&scheduler, selection).await?;
+
+    match action {
+        "status" => {
+            let text = scheduler.task_status_text(&task_name).await?;
+            send_task_action_menu(config, chat_id, &scheduler, index, &task_name, &text).await
+        }
+        "run" => {
+            send_markdown_text_to_chat(
+                config,
+                chat_id,
+                &format!("Running {}", inline_code(&task_name)),
+            )
+            .await?;
+            let outcome = scheduler.run_task_by_name(&task_name).await?;
+            let text = format!(
+                "Task {} finished with {} in {}\n\n{}",
+                inline_code(&task_name),
+                inline_code(&outcome.status),
+                inline_code(&format!("{}s", outcome.duration_seconds)),
+                truncate(outcome.summary.trim(), 2500)
+            );
+            send_task_action_menu(config, chat_id, &scheduler, index, &task_name, &text).await
+        }
+        "enable" => {
+            scheduler.set_task_enabled_by_name(&task_name, true).await?;
+            send_task_detail_menu(config, chat_id, &scheduler, index, &task_name).await
+        }
+        "disable" => {
+            scheduler
+                .set_task_enabled_by_name(&task_name, false)
+                .await?;
+            send_task_detail_menu(config, chat_id, &scheduler, index, &task_name).await
+        }
+        "exit" => send_markdown_text_to_chat(config, chat_id, "Exited task selector.").await,
+        _ => send_markdown_text_to_chat(config, chat_id, "Stale TinyButler selection").await,
+    }
+}
+
+async fn task_name_for_callback_selection(
+    scheduler: &Scheduler,
+    selection: TaskCallbackSelection,
+) -> Result<String> {
+    let tasks = scheduler.task_selector_items().await?;
+    let task_name = tasks
+        .get(selection.index)
+        .cloned()
+        .context("stale task selection")?;
+    if task_selector_fingerprint(&task_name) != selection.fingerprint {
+        bail!("stale task selection");
+    }
+    Ok(task_name)
+}
+
+async fn send_task_index_menu(
+    config: &Config,
+    chat_id: &str,
+    text: &str,
+    tasks: &[String],
+) -> Result<()> {
+    send_inline_menu(
+        config,
+        chat_id,
+        text,
+        tasks
+            .iter()
+            .enumerate()
+            .map(|(index, task)| {
+                (
+                    task.clone(),
+                    format!("tb_task:{index}:{}", task_selector_fingerprint(task)),
+                )
+            })
+            .collect(),
+    )
+    .await
+}
+
+async fn send_task_detail_menu(
+    config: &Config,
+    chat_id: &str,
+    scheduler: &Scheduler,
+    task_index: usize,
+    task_name: &str,
+) -> Result<()> {
+    let text = scheduler.task_detail_text(task_name).await?;
+    send_task_action_menu(config, chat_id, scheduler, task_index, task_name, &text).await
+}
+
+async fn send_task_action_menu(
+    config: &Config,
+    chat_id: &str,
+    scheduler: &Scheduler,
+    task_index: usize,
+    task_name: &str,
+    text: &str,
+) -> Result<()> {
+    let buttons = task_action_buttons(scheduler, task_index, task_name).await?;
+    if inline_menu_text_fits(text) {
+        return send_inline_menu(config, chat_id, text, buttons).await;
+    }
+
+    send_markdown_text_to_chat(config, chat_id, text).await?;
+    send_inline_menu(
+        config,
+        chat_id,
+        &format!("Choose an action for {}:", inline_code(task_name)),
+        buttons,
+    )
+    .await
+}
+
+async fn task_action_buttons(
+    scheduler: &Scheduler,
+    task_index: usize,
+    task_name: &str,
+) -> Result<Vec<(String, String)>> {
+    Ok(scheduler
+        .task_selector_action_labels(task_name)
+        .await?
+        .into_iter()
+        .map(|action| {
+            (
+                action.clone(),
+                format!(
+                    "tb_task_action:{action}:{task_index}:{}",
+                    task_selector_fingerprint(task_name)
+                ),
+            )
+        })
+        .collect())
+}
+
+fn inline_menu_text_fits(text: &str) -> bool {
+    render_markdown_v2(text).chars().count() <= 3500
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TaskCallbackSelection {
+    index: usize,
+    fingerprint: String,
+}
+
+fn parse_task_callback_data(data: &str) -> Result<TaskCallbackSelection> {
+    let Some((index_text, fingerprint)) = data.split_once(':') else {
+        bail!("invalid task selection callback");
+    };
+    let index = index_text
+        .parse::<usize>()
+        .with_context(|| format!("invalid task selection index: {index_text}"))?;
+    if !valid_task_fingerprint(fingerprint) {
+        bail!("invalid task selection fingerprint");
+    }
+    Ok(TaskCallbackSelection {
+        index,
+        fingerprint: fingerprint.to_string(),
+    })
+}
+
+fn task_selector_fingerprint(task_name: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in task_name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn valid_task_fingerprint(value: &str) -> bool {
+    value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 async fn handle_abort_command(
@@ -484,7 +601,7 @@ async fn handle_bare_chat_text(
                 &chat_id,
                 &format!(
                     "Chat turn failed:\n{}",
-                    code_block(&truncate(&format!("{err:#}"), 1200))
+                    markdown_code_block(&truncate(&format!("{err:#}"), 1200))
                 ),
             )
             .await;
@@ -507,6 +624,12 @@ async fn handle_callback(config: &Config, callback: &TelegramCallbackQuery) -> R
     }
     if let Some(session_id) = data.strip_prefix("tc_session:") {
         return handle_session_callback(config, &chat_id, session_id).await;
+    }
+    if let Some(task_data) = data.strip_prefix("tb_task:") {
+        return handle_task_callback(config, &chat_id, task_data).await;
+    }
+    if let Some(action_data) = data.strip_prefix("tb_task_action:") {
+        return handle_task_action_callback(config, &chat_id, action_data).await;
     }
     send_markdown_text_to_chat(config, &chat_id, "Stale TinyButler selection").await
 }
@@ -676,7 +799,7 @@ async fn run_telegram_chat_turn(
                         if last_edit.elapsed() >= Duration::from_millis(1200) {
                             let preview = telegram_output_preview(&assistant_visible_text(&assistant_output));
                             if !preview.trim().is_empty() {
-                                edit_or_send_markdown(&config, &chat_id, placeholder, &preview).await?;
+                                edit_or_send_markdown_v2(&config, &chat_id, placeholder, &preview).await?;
                             }
                             last_edit = Instant::now();
                         }
@@ -698,24 +821,24 @@ async fn run_telegram_chat_turn(
                     Some(ChatEvent::TurnCompleted) => {
                         typing_done.store(true, std::sync::atomic::Ordering::Relaxed);
                         let mut final_text = assistant_visible_text(&assistant_output);
-                        let mut media_paths =
-                            extract_outbound_media_paths(&assistant_output, &working_directory);
-                        final_text = remove_media_markers(&final_text).trim().to_string();
+                        let mut attachment_paths =
+                            extract_outbound_attachment_paths(&assistant_output, &working_directory);
+                        final_text = remove_attachment_markers(&final_text).trim().to_string();
                         extend_unique_paths(
-                            &mut media_paths,
+                            &mut attachment_paths,
                             extract_plain_image_paths(&final_text, &working_directory),
                         );
                         if final_text.trim().is_empty() {
                             if aborted {
                                 final_text = "Aborted".to_string();
-                            } else if media_paths.is_empty() {
+                            } else if attachment_paths.is_empty() {
                                 final_text = "(no output)".to_string();
                             } else {
-                                final_text = "Sent media.".to_string();
+                                final_text = "Sent attachment.".to_string();
                             }
                         }
                         send_telegram_output(&config, &chat_id, placeholder, &final_text).await?;
-                        send_outbound_media_paths(&config, &chat_id, &media_paths, &final_text).await?;
+                        send_outbound_attachment_paths(&config, &chat_id, &attachment_paths, &final_text).await?;
                         mark_turn_finished(&config, agent.active_session(), None).await?;
                         return Ok(());
                     }
@@ -855,11 +978,7 @@ fn bot_menu_commands() -> Vec<TelegramBotCommand> {
         TelegramBotCommand::new("new", "New chat"),
         TelegramBotCommand::new("session", "Resume chat"),
         TelegramBotCommand::new("abort", "Abort turn"),
-        TelegramBotCommand::new("task_list", "List tasks"),
-        TelegramBotCommand::new("task_status", "Task status"),
-        TelegramBotCommand::new("task_run", "Run task"),
-        TelegramBotCommand::new("task_enable", "Enable task"),
-        TelegramBotCommand::new("task_disable", "Disable task"),
+        TelegramBotCommand::new("tasks", "Task selector"),
         TelegramBotCommand::new("help", "Help"),
     ]
 }
@@ -903,7 +1022,7 @@ async fn send_media_to_chat(
         .part(field_name, Part::bytes(bytes).file_name(filename));
     if let Some(caption) = caption.filter(|value| !value.trim().is_empty()) {
         form = form
-            .text("caption", sanitize_markdown_v2_message(caption))
+            .text("caption", render_markdown_v2(caption))
             .text("parse_mode", TELEGRAM_PARSE_MODE);
     }
 
@@ -917,13 +1036,67 @@ async fn send_media_to_chat(
     ensure_success(response, method).await
 }
 
+fn classify_attachment(path: &Path) -> TelegramAttachment {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("png" | "jpg" | "jpeg" | "webp") => TelegramAttachment {
+            method: "sendPhoto",
+            field_name: "photo",
+        },
+        Some("gif") => TelegramAttachment {
+            method: "sendAnimation",
+            field_name: "animation",
+        },
+        Some("mp4" | "m4v") => TelegramAttachment {
+            method: "sendVideo",
+            field_name: "video",
+        },
+        Some("mp3" | "m4a") => TelegramAttachment {
+            method: "sendAudio",
+            field_name: "audio",
+        },
+        _ => TelegramAttachment {
+            method: "sendDocument",
+            field_name: "document",
+        },
+    }
+}
+
 async fn send_markdown_text_to_chat(config: &Config, chat_id: &str, text: &str) -> Result<()> {
-    send_markdown_text_to_chat_with_id(config, chat_id, text)
+    let mut chunks = chunk_markdown_v2(text, 3500).into_iter();
+    if let Some(first) = chunks.next() {
+        send_markdown_v2_to_chat_with_id(config, chat_id, &first).await?;
+    }
+    for chunk in chunks {
+        send_markdown_v2_to_chat(config, chat_id, &chunk).await?;
+    }
+    Ok(())
+}
+
+async fn send_markdown_text_to_chat_with_id(
+    config: &Config,
+    chat_id: &str,
+    text: &str,
+) -> Result<i64> {
+    let mut chunks = chunk_markdown_v2(text, 3500).into_iter();
+    let first = chunks.next().unwrap_or_default();
+    let message_id = send_markdown_v2_to_chat_with_id(config, chat_id, &first).await?;
+    for chunk in chunks {
+        send_markdown_v2_to_chat(config, chat_id, &chunk).await?;
+    }
+    Ok(message_id)
+}
+
+async fn send_markdown_v2_to_chat(config: &Config, chat_id: &str, text: &str) -> Result<()> {
+    send_markdown_v2_to_chat_with_id(config, chat_id, text)
         .await
         .map(|_| ())
 }
 
-async fn send_markdown_text_to_chat_with_id(
+async fn send_markdown_v2_to_chat_with_id(
     config: &Config,
     chat_id: &str,
     text: &str,
@@ -947,7 +1120,7 @@ async fn send_markdown_text_to_chat_with_id(
     parse_message_id_response(response, "sendMessage").await
 }
 
-async fn edit_markdown_text_to_chat(
+async fn edit_markdown_v2_to_chat(
     config: &Config,
     chat_id: &str,
     message_id: i64,
@@ -977,17 +1150,17 @@ async fn edit_markdown_text_to_chat(
     ensure_success(response, "editMessageText").await
 }
 
-async fn edit_or_send_markdown(
+async fn edit_or_send_markdown_v2(
     config: &Config,
     chat_id: &str,
     message_id: i64,
     text: &str,
 ) -> Result<()> {
-    if let Err(err) = edit_markdown_text_to_chat(config, chat_id, message_id, text).await {
+    if let Err(err) = edit_markdown_v2_to_chat(config, chat_id, message_id, text).await {
         if telegram_message_not_modified(&err) {
             return Ok(());
         }
-        send_markdown_text_to_chat(config, chat_id, text).await?;
+        send_markdown_v2_to_chat(config, chat_id, text).await?;
     }
     Ok(())
 }
@@ -1006,7 +1179,7 @@ async fn send_inline_menu(
         .collect::<Vec<_>>();
     let payload = json!({
         "chat_id": chat_id,
-        "text": escape_markdown_v2(text),
+        "text": render_markdown_v2(text),
         "parse_mode": TELEGRAM_PARSE_MODE,
         "reply_markup": { "inline_keyboard": rows },
     });
@@ -1224,17 +1397,26 @@ async fn ensure_success(response: reqwest::Response, method: &str) -> Result<()>
     Ok(())
 }
 
-async fn send_outbound_media_paths(
+async fn send_outbound_attachment_paths(
     config: &Config,
     chat_id: &str,
     paths: &[PathBuf],
     _visible_text: &str,
 ) -> Result<()> {
     for path in paths {
-        if !is_supported_photo_path(path) {
+        if !is_supported_attachment_path(path) {
             continue;
         }
-        send_media_to_chat(config, "sendPhoto", "photo", chat_id, path, None).await?;
+        let attachment = classify_attachment(path);
+        send_media_to_chat(
+            config,
+            attachment.method,
+            attachment.field_name,
+            chat_id,
+            path,
+            None,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -1251,7 +1433,7 @@ fn sanitize_visible_segment(segment: &str) -> String {
         .to_string()
 }
 
-fn extract_outbound_media_paths(text: &str, working_directory: &Path) -> Vec<PathBuf> {
+fn extract_outbound_attachment_paths(text: &str, working_directory: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     let mut in_fence = false;
     for line in text.lines() {
@@ -1263,10 +1445,10 @@ fn extract_outbound_media_paths(text: &str, working_directory: &Path) -> Vec<Pat
             continue;
         }
         let trimmed = line.trim_start();
-        let Some(raw) = strip_ascii_prefix(trimmed, "MEDIA:") else {
+        let Some(raw) = strip_ascii_prefix(trimmed, "ATTACH:") else {
             continue;
         };
-        let Some(path) = resolve_media_path(raw, working_directory) else {
+        let Some(path) = resolve_attachment_path(raw, working_directory) else {
             continue;
         };
         if !paths.iter().any(|known| known == &path) {
@@ -1279,9 +1461,12 @@ fn extract_outbound_media_paths(text: &str, working_directory: &Path) -> Vec<Pat
 fn extract_plain_image_paths(text: &str, working_directory: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for raw in text.split_whitespace() {
-        let Some(path) = resolve_media_path(raw, working_directory) else {
+        let Some(path) = resolve_attachment_path(raw, working_directory) else {
             continue;
         };
+        if !is_supported_plain_image_path(&path) {
+            continue;
+        }
         if !paths.iter().any(|known| known == &path) {
             paths.push(path);
         }
@@ -1297,7 +1482,7 @@ fn extend_unique_paths(paths: &mut Vec<PathBuf>, extra_paths: Vec<PathBuf>) {
     }
 }
 
-fn remove_media_markers(text: &str) -> String {
+fn remove_attachment_markers(text: &str) -> String {
     let mut out = Vec::new();
     let mut in_fence = false;
     for line in text.lines() {
@@ -1306,7 +1491,7 @@ fn remove_media_markers(text: &str) -> String {
             out.push(line);
             continue;
         }
-        if !in_fence && strip_ascii_prefix(line.trim_start(), "MEDIA:").is_some() {
+        if !in_fence && strip_ascii_prefix(line.trim_start(), "ATTACH:").is_some() {
             continue;
         }
         out.push(line);
@@ -1314,8 +1499,8 @@ fn remove_media_markers(text: &str) -> String {
     out.join("\n")
 }
 
-fn resolve_media_path(raw: &str, working_directory: &Path) -> Option<PathBuf> {
-    let candidate = normalize_media_candidate(raw)?;
+fn resolve_attachment_path(raw: &str, working_directory: &Path) -> Option<PathBuf> {
+    let candidate = normalize_attachment_candidate(raw)?;
     if candidate.starts_with("http://")
         || candidate.starts_with("https://")
         || candidate.starts_with("file://")
@@ -1334,13 +1519,13 @@ fn resolve_media_path(raw: &str, working_directory: &Path) -> Option<PathBuf> {
     } else {
         working_directory.join(expanded)
     };
-    if !is_supported_photo_path(&path) || !path.is_file() {
+    if !is_supported_attachment_path(&path) || !path.is_file() {
         return None;
     }
     std::fs::canonicalize(&path).ok().or(Some(path))
 }
 
-fn normalize_media_candidate(raw: &str) -> Option<String> {
+fn normalize_attachment_candidate(raw: &str) -> Option<String> {
     let mut value = raw.trim();
     if value.is_empty() {
         return None;
@@ -1367,7 +1552,11 @@ fn normalize_media_candidate(raw: &str) -> Option<String> {
     }
 }
 
-fn is_supported_photo_path(path: &Path) -> bool {
+fn is_supported_attachment_path(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn is_supported_plain_image_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| {
@@ -1377,6 +1566,7 @@ fn is_supported_photo_path(path: &Path) -> bool {
             )
         })
         .unwrap_or(false)
+        && path.is_file()
 }
 
 fn transform_outside_fenced_code(text: &str, transform: fn(&str) -> String) -> String {
@@ -1535,18 +1725,18 @@ async fn send_telegram_output(
     first_message_id: i64,
     text: &str,
 ) -> Result<()> {
-    let chunks = chunk_escaped_markdown_v2(text, 3500);
+    let chunks = chunk_markdown_v2(text, 3500);
     if let Some(first) = chunks.first() {
-        edit_or_send_markdown(config, chat_id, first_message_id, first).await?;
+        edit_or_send_markdown_v2(config, chat_id, first_message_id, first).await?;
     }
     for chunk in chunks.into_iter().skip(1) {
-        send_markdown_text_to_chat(config, chat_id, &chunk).await?;
+        send_markdown_v2_to_chat(config, chat_id, &chunk).await?;
     }
     Ok(())
 }
 
 fn telegram_output_preview(text: &str) -> String {
-    chunk_escaped_markdown_v2(text, 3500)
+    chunk_markdown_v2(text, 3500)
         .into_iter()
         .next()
         .unwrap_or_default()
@@ -1564,6 +1754,71 @@ fn nonresumable_chat_error(err: &anyhow::Error) -> bool {
 
 fn telegram_message_not_modified(err: &anyhow::Error) -> bool {
     format!("{err:#}").contains("message is not modified")
+}
+
+fn chunk_markdown_v2(text: &str, limit: usize) -> Vec<String> {
+    if text.is_empty() {
+        return vec![String::new()];
+    }
+
+    let limit = limit.max(1);
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for block in markdown_blocks(text) {
+        let candidate = format!("{current}{block}");
+        if render_markdown_v2(&candidate).chars().count() <= limit {
+            current = candidate;
+            continue;
+        }
+
+        if !current.is_empty() {
+            chunks.push(render_markdown_v2(&current));
+            current.clear();
+        }
+
+        if render_markdown_v2(&block).chars().count() <= limit {
+            current = block;
+        } else {
+            chunks.extend(chunk_escaped_markdown_v2(&block, limit));
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(render_markdown_v2(&current));
+    }
+    if chunks.is_empty() {
+        vec![render_markdown_v2(text)]
+    } else {
+        chunks
+    }
+}
+
+fn render_markdown_v2(text: &str) -> String {
+    convert_with_strategy(text, UnsupportedTagsStrategy::Escape)
+        .map(|rendered| rendered.trim_end_matches('\n').to_string())
+        .unwrap_or_else(|_| escape_markdown_v2(text))
+}
+
+fn markdown_blocks(text: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = String::new();
+    let mut in_fence = false;
+
+    for line in text.split_inclusive('\n') {
+        current.push_str(line);
+        if is_fence_boundary(line) {
+            in_fence = !in_fence;
+        }
+        if !in_fence && line.trim().is_empty() {
+            blocks.push(std::mem::take(&mut current));
+        }
+    }
+
+    if !current.is_empty() {
+        blocks.push(current);
+    }
+    blocks
 }
 
 fn chunk_escaped_markdown_v2(text: &str, limit: usize) -> Vec<String> {
@@ -1596,10 +1851,15 @@ fn truncate(text: &str, limit: usize) -> String {
 }
 
 fn inline_code(text: &str) -> String {
-    format!("`{}`", escape_markdown_v2_code(text))
+    let fence = "`".repeat(longest_backtick_run(text) + 1);
+    if text.starts_with('`') || text.ends_with('`') {
+        format!("{fence} {text} {fence}")
+    } else {
+        format!("{fence}{text}{fence}")
+    }
 }
 
-/// Escape general user-controlled text for Telegram MarkdownV2.
+/// Low-level plain-text fallback for Telegram MarkdownV2.
 pub fn escape_markdown_v2(text: &str) -> String {
     const RESERVED: &[char] = &[
         '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!',
@@ -1615,74 +1875,28 @@ pub fn escape_markdown_v2(text: &str) -> String {
     out
 }
 
-/// Make CLI-authored MarkdownV2 safe while preserving simple bold and code spans.
-pub fn sanitize_markdown_v2_message(text: &str) -> String {
-    let chars = text.chars().collect::<Vec<_>>();
-    let mut out = String::with_capacity(text.len());
-    let mut index = 0usize;
-    let mut bold_open = false;
-
-    while index < chars.len() {
-        let ch = chars[index];
-        if ch == '\\' {
-            if let Some(next) = chars.get(index + 1) {
-                out.push('\\');
-                out.push(*next);
-                index += 2;
-            } else {
-                out.push_str("\\\\");
-                index += 1;
-            }
-            continue;
-        }
-
-        if ch == '`' {
-            if let Some(end) = chars[index + 1..]
-                .iter()
-                .position(|candidate| *candidate == '`')
-            {
-                let end_index = index + 1 + end;
-                out.push('`');
-                out.push_str(&escape_markdown_v2_code(
-                    &chars[index + 1..end_index].iter().collect::<String>(),
-                ));
-                out.push('`');
-                index = end_index + 1;
-            } else {
-                out.push_str("\\`");
-                index += 1;
-            }
-            continue;
-        }
-
-        if ch == '*' {
-            if bold_open {
-                bold_open = false;
-                out.push('*');
-            } else if chars[index + 1..].contains(&'*') {
-                bold_open = true;
-                out.push('*');
-            } else {
-                out.push_str("\\*");
-            }
-            index += 1;
-            continue;
-        }
-
-        out.push_str(&escape_markdown_v2(&ch.to_string()));
-        index += 1;
-    }
-
-    out
-}
-
-fn escape_markdown_v2_code(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('`', "\\`")
-}
-
-/// Wrap short user-controlled text in a Telegram MarkdownV2 code block.
+/// Wrap text in a CommonMark fenced code block.
 pub fn code_block(text: &str) -> String {
-    format!("```\n{}\n```", escape_markdown_v2_code(text))
+    markdown_code_block(text)
+}
+
+fn markdown_code_block(text: &str) -> String {
+    let fence = "`".repeat((longest_backtick_run(text) + 1).max(3));
+    format!("{fence}\n{text}\n{fence}")
+}
+
+fn longest_backtick_run(text: &str) -> usize {
+    let mut longest = 0usize;
+    let mut current = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
 }
 
 #[cfg(test)]
@@ -1690,11 +1904,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn help_text_escapes_markdown_v2_plain_descriptions() {
+    fn help_text_is_common_markdown_and_renders_to_markdown_v2() {
         let text = help_text();
+        let rendered = render_markdown_v2(&text);
 
-        assert!(text.contains("code\\-agent"));
-        assert!(!text.contains("code-agent"));
+        assert!(text.contains("code-agent"));
+        assert!(rendered.contains("code\\-agent"));
+        assert!(rendered.contains("*TinyButler commands:*"));
     }
 
     #[test]
@@ -1707,17 +1923,7 @@ mod tests {
 
         assert_eq!(
             command_names,
-            vec![
-                "new",
-                "session",
-                "abort",
-                "task_list",
-                "task_status",
-                "task_run",
-                "task_enable",
-                "task_disable",
-                "help",
-            ]
+            vec!["new", "session", "abort", "tasks", "help"]
         );
         for command in commands {
             assert!(command
@@ -1769,6 +1975,55 @@ mod tests {
     }
 
     #[test]
+    fn renders_common_markdown_before_telegram_delivery() {
+        let rendered = render_markdown_v2(
+            "## Summary\n\n**Done** with `path-name`.\n\n- item_one\n\n[OpenAI](https://openai.com/a_b)",
+        );
+
+        assert!(rendered.contains("*Summary*"));
+        assert!(rendered.contains("*Done*"));
+        assert!(rendered.contains("`path-name`"));
+        assert!(rendered.contains("\\_one"));
+        assert!(rendered.contains("[OpenAI](https://openai.com/a_b)"));
+        assert!(!rendered.contains("\\*\\*Done\\*\\*"));
+    }
+
+    #[test]
+    fn chunks_common_markdown_on_block_boundaries() {
+        let chunks = chunk_markdown_v2("**first**\n\n**second**", 10);
+
+        assert_eq!(chunks, vec!["*first*", "*second*"]);
+    }
+
+    #[test]
+    fn task_callback_data_uses_stable_short_fingerprint() {
+        let fingerprint = task_selector_fingerprint("regular-check");
+        let callback = format!("12:{fingerprint}");
+
+        assert_eq!(
+            parse_task_callback_data(&callback).expect("callback data"),
+            TaskCallbackSelection {
+                index: 12,
+                fingerprint,
+            }
+        );
+        assert!(callback.len() < 64);
+    }
+
+    #[test]
+    fn rejects_malformed_task_callback_data() {
+        assert!(parse_task_callback_data("missing-fingerprint").is_err());
+        assert!(parse_task_callback_data("0:not-hex").is_err());
+        assert!(parse_task_callback_data("not-number:0123456789abcdef").is_err());
+    }
+
+    #[test]
+    fn inline_menu_text_limit_accounts_for_markdown_v2_expansion() {
+        assert!(inline_menu_text_fits("short **menu**"));
+        assert!(!inline_menu_text_fits(&"x_y".repeat(1000)));
+    }
+
+    #[test]
     fn assistant_visible_text_prefers_final_and_strips_reasoning() {
         let text = "draft <think>private reasoning</think><final>Visible answer</final>";
 
@@ -1786,27 +2041,27 @@ mod tests {
     }
 
     #[test]
-    fn extracts_and_removes_media_markers() {
+    fn extracts_and_removes_attachment_markers() {
         let temp = tempfile::tempdir().expect("temp dir");
         let image = temp.path().join("screen.png");
         std::fs::write(&image, b"not really a png").expect("write image");
-        let text = format!("Here\nMEDIA:{}\nDone", image.display());
+        let text = format!("Here\nATTACH:{}\nDone", image.display());
 
         assert_eq!(
-            extract_outbound_media_paths(&text, temp.path()),
+            extract_outbound_attachment_paths(&text, temp.path()),
             vec![image]
         );
-        assert_eq!(remove_media_markers(&text), "Here\nDone");
+        assert_eq!(remove_attachment_markers(&text), "Here\nDone");
     }
 
     #[test]
-    fn extracts_home_and_relative_media_paths() {
+    fn extracts_home_and_relative_attachment_paths() {
         let temp = tempfile::tempdir().expect("temp dir");
         let image = temp.path().join("relative.jpg");
         std::fs::write(&image, b"jpg").expect("write image");
 
         assert_eq!(
-            extract_outbound_media_paths("MEDIA:./relative.jpg", temp.path()),
+            extract_outbound_attachment_paths("ATTACH:./relative.jpg", temp.path()),
             vec![image]
         );
     }
@@ -1819,5 +2074,44 @@ mod tests {
         let text = format!("saved at `{}`", image.display());
 
         assert_eq!(extract_plain_image_paths(&text, temp.path()), vec![image]);
+    }
+
+    #[test]
+    fn classifies_attachment_methods_by_extension() {
+        assert_eq!(
+            classify_attachment(Path::new("screen.png")),
+            TelegramAttachment {
+                method: "sendPhoto",
+                field_name: "photo",
+            }
+        );
+        assert_eq!(
+            classify_attachment(Path::new("clip.gif")),
+            TelegramAttachment {
+                method: "sendAnimation",
+                field_name: "animation",
+            }
+        );
+        assert_eq!(
+            classify_attachment(Path::new("clip.mp4")),
+            TelegramAttachment {
+                method: "sendVideo",
+                field_name: "video",
+            }
+        );
+        assert_eq!(
+            classify_attachment(Path::new("sound.mp3")),
+            TelegramAttachment {
+                method: "sendAudio",
+                field_name: "audio",
+            }
+        );
+        assert_eq!(
+            classify_attachment(Path::new("report.txt")),
+            TelegramAttachment {
+                method: "sendDocument",
+                field_name: "document",
+            }
+        );
     }
 }

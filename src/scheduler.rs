@@ -1,7 +1,7 @@
-//! Scheduler orchestration, task inspection, and public task command handlers.
+//! Scheduler orchestration, task inspection, and public task selector handlers.
 //!
 //! The scheduler owns the daemon loop, task lock handling, state updates, and
-//! the CLI-facing `check` and `task ...` command behavior.
+//! the CLI-facing `check` and `tasks` command behavior.
 
 use std::time::Duration;
 
@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::cron_expr::next_run_after as cron_next_run_after;
 pub use crate::cron_expr::{describe_schedule, format_schedule_for_display, normalize_cron};
 use crate::lock::TaskLock;
+use crate::log_retention;
 use crate::runner::{self, RunOutcome};
 use crate::state::TaskState;
 use crate::task::{Task, TaskType};
@@ -38,6 +39,7 @@ impl Scheduler {
             "TinyButler daemon started with home {}",
             self.config.home.display()
         );
+        self.maintain_all_task_logs().await?;
         self.reconcile_startup_schedules().await?;
 
         loop {
@@ -167,6 +169,48 @@ impl Scheduler {
         Ok(output)
     }
 
+    /// Return task names in the stable selector order.
+    pub async fn task_selector_items(&self) -> Result<Vec<String>> {
+        Ok(self
+            .load_tasks_strict()
+            .await?
+            .into_iter()
+            .map(|task| task.name)
+            .collect())
+    }
+
+    /// Return selected-task action labels for the current task state.
+    pub async fn task_selector_action_labels(&self, name: &str) -> Result<Vec<String>> {
+        let task = self.find_task(name).await?;
+        let mut actions = vec!["status".to_string(), "run".to_string()];
+        if task.enabled {
+            actions.push("disable".to_string());
+        } else {
+            actions.push("enable".to_string());
+        }
+        actions.push("exit".to_string());
+        Ok(actions)
+    }
+
+    /// Build the selected-task detail text shown before action choices.
+    pub async fn task_detail_text(&self, name: &str) -> Result<String> {
+        let task = self.find_task(name).await?;
+        let task_yaml_path = task.task_yaml_path();
+        let task_yaml = fs::read_to_string(&task_yaml_path)
+            .await
+            .with_context(|| format!("failed to read {}", task_yaml_path.display()))?;
+
+        let mut output = format!(
+            "**Task:** `{}`\n\n**task.yaml:** `{}`\n{}\n\n**schedule:** {}\n",
+            task.name,
+            task_yaml_path.display(),
+            markdown_code_fence("yaml", task_yaml.trim_end()),
+            format_schedule_for_display(&task.schedule),
+        );
+        output.push_str(&self.task_execution_file_preview(&task).await);
+        Ok(output)
+    }
+
     /// Run one task immediately by task name or task directory name.
     pub async fn run_task_by_name(&self, name: &str) -> Result<RunOutcome> {
         let task = self.find_task(name).await?;
@@ -199,7 +243,7 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Print task details, current state, and the first 20 lines of the latest log.
+    /// Print task runtime state and the first 20 lines of the latest log.
     pub async fn task_status(&self, name: &str) -> Result<()> {
         println!("{}", self.task_status_text(name).await?);
         Ok(())
@@ -209,35 +253,25 @@ impl Scheduler {
     pub async fn task_status_text(&self, name: &str) -> Result<String> {
         let task = self.find_task(name).await?;
         let state = TaskState::load(&task.state_path()).await?;
-
+        let state_path = task.state_path();
         let mut output = format!(
-            "task:\n  name: {}\n  enabled: {}\n  type: {:?}\n  runner: {}\n  schedule: {}\n  timeout: {}\n  session: {:?}",
+            "**Task status:** `{}`\n\n**state.json:** `{}`\n{}",
             task.name,
-            task.enabled,
-            task.task_type,
-            task.runner_label(),
-            format_schedule_for_display(&task.schedule),
-            task.timeout,
-            task.session,
+            state_path.display(),
+            markdown_code_fence("json", &serde_json::to_string_pretty(&state)?),
         );
-        output.push_str(&self.task_execution_file_preview(&task).await);
-        output.push_str(&format!(
-            "\n\nstate:\n{}",
-            serde_json::to_string_pretty(&state)?
-        ));
 
         if let Some(log) = state.last_log.as_deref() {
             let log_path = task.dir.join(log);
             output.push_str(&format!(
-                "\n\nlatest_log_first_20_lines: {}",
+                "\n\n**latest_log_first_20_lines:** `{}`",
                 log_path.display()
             ));
-            match fs::read_to_string(&log_path).await {
+            match log_retention::read_log_text(&task.dir, log).await {
                 Ok(text) => {
-                    for line in text.lines().take(20) {
-                        output.push('\n');
-                        output.push_str(line);
-                    }
+                    let preview = text.lines().take(20).collect::<Vec<_>>().join("\n");
+                    output.push('\n');
+                    output.push_str(&markdown_code_fence("text", &preview));
                 }
                 Err(err) => output.push_str(&format!("\nfailed to read latest log: {err:#}")),
             }
@@ -248,19 +282,29 @@ impl Scheduler {
 
     /// Return the task-owned prompt or shell script content for status output.
     async fn task_execution_file_preview(&self, task: &Task) -> String {
-        let (label, path) = match task.task_type {
-            TaskType::Agent => ("agent_prompt", task.agent_path()),
-            TaskType::Command => ("shell_command", task.run_script_path()),
+        let (label, path, info) = match task.task_type {
+            TaskType::Agent => ("agent.md", task.agent_path(), "markdown"),
+            TaskType::Command => ("run.sh", task.run_script_path(), "bash"),
         };
 
         match fs::read_to_string(&path).await {
-            Ok(text) => format!("\n\n{label}: {}\n{}", path.display(), text.trim_end()),
-            Err(err) => format!("\n\n{label}: {}\nfailed to read: {err:#}", path.display()),
+            Ok(text) => format!(
+                "\n\n**{}:** `{}`\n{}",
+                label,
+                path.display(),
+                markdown_code_fence(info, text.trim_end())
+            ),
+            Err(err) => format!(
+                "\n\n**{}:** `{}`\nfailed to read: {err:#}",
+                label,
+                path.display()
+            ),
         }
     }
 
     async fn tick(&self) -> Result<()> {
         for task in self.load_tasks_lenient().await? {
+            self.maintain_task_logs(&task).await;
             if !task.enabled {
                 continue;
             }
@@ -357,8 +401,22 @@ impl Scheduler {
                 );
             }
         }
+        self.maintain_task_logs(task).await;
 
         Ok(outcome)
+    }
+
+    async fn maintain_all_task_logs(&self) -> Result<()> {
+        for task in self.load_tasks_lenient().await? {
+            self.maintain_task_logs(&task).await;
+        }
+        Ok(())
+    }
+
+    async fn maintain_task_logs(&self, task: &Task) {
+        if let Err(err) = log_retention::maintain_task_logs(&task.logs_dir(), Local::now()).await {
+            warn!("failed to maintain logs for {}: {err:#}", task.name);
+        }
     }
 
     /// Decide whether the daemon should send a Telegram notification.
@@ -503,4 +561,27 @@ pub fn set_enabled_in_task_yaml(text: &str, enabled: bool) -> String {
     let mut out = lines.join("\n");
     out.push('\n');
     out
+}
+
+fn markdown_code_fence(info: &str, text: &str) -> String {
+    let fence = "`".repeat((longest_backtick_run(text) + 1).max(3));
+    if info.is_empty() {
+        format!("{fence}\n{text}\n{fence}")
+    } else {
+        format!("{fence}{info}\n{text}\n{fence}")
+    }
+}
+
+fn longest_backtick_run(text: &str) -> usize {
+    let mut longest = 0usize;
+    let mut current = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+    longest
 }

@@ -80,10 +80,13 @@ TinyButler/
 - [docs/markdown-message.md](docs/markdown-message.md) owns outbound Telegram Markdown conversion, attachment delivery, and `ATTACH:` directives.
 - [docs/tasks.md](docs/tasks.md) owns task files, `task.yaml`, task commands, scheduling, task state, notifications, and log retention.
 - [docs/chatbridge.md](docs/chatbridge.md) owns the interactive chat bridge behavior, state machine, and adapter architecture.
+- [docs/integration-testing-requirements.md](docs/integration-testing-requirements.md) owns manual and semi-automated integration test requirements.
 
 ## Testing
 
 Write focused tests before implementing behavior. Prefer repository-level integration tests under `tests/` for user-facing behavior, and use small module-level unit tests in `src/*.rs` for private parsing, validation, formatting, and normalization helpers when integration tests would be awkward.
+
+Manual and semi-automated end-to-end testing requirements live in [docs/integration-testing-requirements.md](docs/integration-testing-requirements.md).
 
 Before committing Rust code changes, run:
 

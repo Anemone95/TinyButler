@@ -1,19 +1,16 @@
 //! Telegram ingress command parsing tests.
 
 use tinybutler::telegram::{
-    code_block, escape_markdown_v2, parse_ingress_command, sanitize_markdown_v2_message,
-    IngressCommand, TelegramPollState, TELEGRAM_PARSE_MODE,
+    code_block, escape_markdown_v2, parse_ingress_command, IngressCommand, TelegramPollState,
+    TELEGRAM_PARSE_MODE,
 };
 
 #[test]
-fn parses_task_list_slash_command() {
+fn parses_tasks_slash_command() {
+    assert_eq!(parse_ingress_command("/tasks"), IngressCommand::Tasks);
     assert_eq!(
-        parse_ingress_command("/task_list"),
-        IngressCommand::TaskList
-    );
-    assert_eq!(
-        parse_ingress_command("/task_list@OpenClawBot"),
-        IngressCommand::TaskList
+        parse_ingress_command("/tasks@OpenClawBot"),
+        IngressCommand::Tasks
     );
 }
 
@@ -34,44 +31,16 @@ fn rejects_bare_or_legacy_tasklist_aliases() {
         parse_ingress_command("/tasklist"),
         IngressCommand::Unknown(_)
     ));
-}
-
-#[test]
-fn parses_task_status_and_run_arguments() {
-    assert_eq!(
+    assert!(matches!(
+        parse_ingress_command("/task_list"),
+        IngressCommand::Unknown(_)
+    ));
+    assert!(matches!(
         parse_ingress_command("/task_status mock-gpt55-review"),
-        IngressCommand::TaskStatus("mock-gpt55-review".to_string())
-    );
-    assert_eq!(
+        IngressCommand::Unknown(_)
+    ));
+    assert!(matches!(
         parse_ingress_command("/task_run mock-spark-code-smoke"),
-        IngressCommand::TaskRun("mock-spark-code-smoke".to_string())
-    );
-    assert_eq!(
-        parse_ingress_command("/task_enable mock-gpt55-review"),
-        IngressCommand::TaskEnable("mock-gpt55-review".to_string())
-    );
-    assert_eq!(
-        parse_ingress_command("/task_disable mock-gpt55-review"),
-        IngressCommand::TaskDisable("mock-gpt55-review".to_string())
-    );
-}
-
-#[test]
-fn reports_missing_task_arguments() {
-    assert!(matches!(
-        parse_ingress_command("/task_status"),
-        IngressCommand::Unknown(_)
-    ));
-    assert!(matches!(
-        parse_ingress_command("/task_run"),
-        IngressCommand::Unknown(_)
-    ));
-    assert!(matches!(
-        parse_ingress_command("/task_enable"),
-        IngressCommand::Unknown(_)
-    ));
-    assert!(matches!(
-        parse_ingress_command("/task_disable"),
         IngressCommand::Unknown(_)
     ));
 }
@@ -83,26 +52,11 @@ fn escapes_markdown_v2_user_controlled_text() {
         escape_markdown_v2(r"_*[]()~`>#+-=|{}.!\\"),
         r"\_\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!\\\\"
     );
-    assert_eq!(
-        code_block("path`with\\chars"),
-        "```\npath\\`with\\\\chars\n```"
-    );
 }
 
 #[test]
-fn sanitizes_cli_authored_markdown_v2_without_breaking_simple_formatting() {
-    assert_eq!(
-        sanitize_markdown_v2_message("Build finished. task-name!"),
-        r"Build finished\. task\-name\!"
-    );
-    assert_eq!(
-        sanitize_markdown_v2_message("Task *done* at `task-name`."),
-        r"Task *done* at `task-name`\."
-    );
-    assert_eq!(
-        sanitize_markdown_v2_message(r"Already escaped\."),
-        r"Already escaped\."
-    );
+fn builds_common_markdown_code_blocks() {
+    assert_eq!(code_block("path`with\\chars"), "```\npath`with\\chars\n```");
 }
 
 #[tokio::test]

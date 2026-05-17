@@ -11,7 +11,7 @@ SERVICE_FILE := $(SYSTEMD_USER_DIR)/$(SERVICE_NAME)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build fmt check test clippy verify install install-skills uninstall service-status syncdoc
+.PHONY: build fmt check test clippy verify install install-skills uninstall service-status sync syncdoc
 
 # Build the debug binary for local development.
 build:
@@ -106,8 +106,11 @@ uninstall:
 service-status:
 	systemctl --user status "$(SERVICE_NAME)"
 
-# Commit and push the shared agent development guide.
-syncdoc:
-	git add AGENTS.md
+# Commit and push the shared agent development guide and focused design notes.
+sync:
+	git add AGENTS.md docs/*.md
 	git commit -m "sync"
 	git push
+
+# Backward-compatible alias for the old documentation sync target.
+syncdoc: sync

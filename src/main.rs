@@ -4,13 +4,17 @@
 //! expected to map back to these local commands rather than introduce separate
 //! behavior.
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use crossterm::cursor;
+use crossterm::event::{self, Event, KeyCode};
+use crossterm::execute;
+use crossterm::terminal::{self, ClearType};
 use tracing_subscriber::EnvFilter;
 
 use tinybutler::chat::{
@@ -49,47 +53,25 @@ enum Command {
     },
     /// Validate config and task definitions.
     Check,
-    /// Send outbound Telegram text, photo, or document messages.
+    /// Send outbound Telegram text or attachment messages.
     Telegram {
         /// Text message to send.
         message: Option<String>,
-        /// Local image path to send as a Telegram photo.
+        /// Local file path to send as a Telegram attachment.
         #[arg(long)]
-        photo: Option<PathBuf>,
-        /// Local file path to send as a Telegram document.
-        #[arg(long)]
-        document: Option<PathBuf>,
-        /// Optional media caption.
+        attachment: Option<PathBuf>,
+        /// Optional attachment caption.
         #[arg(long)]
         caption: Option<String>,
     },
-    /// Task inspection and manual execution commands.
-    Task {
-        /// Task command to execute.
-        #[command(subcommand)]
-        command: TaskCommand,
-    },
+    /// Open the task selector.
+    Tasks,
     /// Interactive code-agent chat commands.
     Chat {
         /// Chat command to execute.
         #[command(subcommand)]
         command: ChatCommand,
     },
-}
-
-/// Public `tinybutler task ...` command surface.
-#[derive(Debug, Subcommand)]
-enum TaskCommand {
-    /// List all tasks and their latest state summary.
-    List,
-    /// Run one task immediately.
-    Run { task: String },
-    /// Show task details, state, and latest log preview.
-    Status { task: String },
-    /// Enable one task by updating its task.yaml file.
-    Enable { task: String },
-    /// Disable one task by updating its task.yaml file.
-    Disable { task: String },
 }
 
 /// Public `tinybutler chat ...` command surface.
@@ -139,29 +121,273 @@ async fn main() -> Result<()> {
         }
         Command::Telegram {
             message,
-            photo,
-            document,
+            attachment,
             caption,
-        } => send_telegram(&config, message, photo, document, caption).await,
-        Command::Task { command } => {
+        } => send_telegram(&config, message, attachment, caption).await,
+        Command::Tasks => {
             let scheduler = Scheduler::new(config);
-            match command {
-                TaskCommand::List => scheduler.task_list().await,
-                TaskCommand::Run { task } => scheduler.run_task_by_name(&task).await.map(|_| ()),
-                TaskCommand::Status { task } => scheduler.task_status(&task).await,
-                TaskCommand::Enable { task } => {
-                    scheduler.set_task_enabled_by_name(&task, true).await
-                }
-                TaskCommand::Disable { task } => {
-                    scheduler.set_task_enabled_by_name(&task, false).await
-                }
-            }
+            run_task_selector(&scheduler).await
         }
         Command::Chat { command } => match command {
             ChatCommand::New { runner } => chat_new(config, runner).await,
             ChatCommand::Session { session_id } => chat_session(config, session_id).await,
         },
     }
+}
+
+async fn run_task_selector(scheduler: &Scheduler) -> Result<()> {
+    let stdin_is_terminal = io::stdin().is_terminal();
+    let stdout_is_terminal = io::stdout().is_terminal();
+
+    if stdin_is_terminal && stdout_is_terminal {
+        run_interactive_task_selector(scheduler).await
+    } else if !stdin_is_terminal {
+        run_scripted_task_selector(scheduler).await
+    } else {
+        scheduler.task_list().await
+    }
+}
+
+async fn run_scripted_task_selector(scheduler: &Scheduler) -> Result<()> {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    let choices = input
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+
+    if choices.is_empty() {
+        return scheduler.task_list().await;
+    }
+
+    let Some(task_name) = resolve_task_selection(scheduler, choices[0]).await? else {
+        println!("exited");
+        return Ok(());
+    };
+
+    println!("{}", scheduler.task_detail_text(&task_name).await?);
+    if let Some(action) = choices.get(1) {
+        run_task_selector_action(scheduler, &task_name, action).await?;
+    }
+    Ok(())
+}
+
+async fn resolve_task_selection(scheduler: &Scheduler, choice: &str) -> Result<Option<String>> {
+    if choice.eq_ignore_ascii_case("exit") || choice.eq_ignore_ascii_case("q") {
+        return Ok(None);
+    }
+    let tasks = scheduler.task_selector_items().await?;
+    if let Ok(index) = choice.parse::<usize>() {
+        if index == 0 {
+            bail!("task selection is out of range");
+        }
+        return tasks
+            .get(index - 1)
+            .cloned()
+            .map(Some)
+            .context("task selection is out of range");
+    }
+    if tasks.iter().any(|task| task == choice) {
+        return Ok(Some(choice.to_string()));
+    }
+    bail!("task not found: {choice}")
+}
+
+async fn run_task_selector_action(
+    scheduler: &Scheduler,
+    task_name: &str,
+    action: &str,
+) -> Result<()> {
+    match action.trim().to_ascii_lowercase().as_str() {
+        "status" => scheduler.task_status(task_name).await,
+        "run" => {
+            let outcome = scheduler.run_task_by_name(task_name).await?;
+            println!(
+                "Task `{}` finished with `{}` in `{}s`\n\n{}",
+                task_name,
+                outcome.status,
+                outcome.duration_seconds,
+                outcome.summary.trim()
+            );
+            Ok(())
+        }
+        "enable" => scheduler.set_task_enabled_by_name(task_name, true).await,
+        "disable" => scheduler.set_task_enabled_by_name(task_name, false).await,
+        "exit" | "q" => {
+            println!("exited");
+            Ok(())
+        }
+        other => bail!("unknown task action: {other}"),
+    }
+}
+
+async fn run_interactive_task_selector(scheduler: &Scheduler) -> Result<()> {
+    let mut stdout = io::stdout();
+    let _guard = RawTerminalGuard::enter(&mut stdout)?;
+    let mut selected_task = 0usize;
+
+    let mut tasks = scheduler.task_selector_items().await?;
+    if tasks.is_empty() {
+        show_terminal_message(&mut stdout, "No tasks found.")?;
+        return Ok(());
+    }
+    tasks.push("Exit".to_string());
+    let task_index = select_terminal_option(
+        &mut stdout,
+        "TinyButler Tasks",
+        "Use Up/Down, Enter, or q.",
+        &tasks,
+        &mut selected_task,
+    )?;
+    if task_index + 1 == tasks.len() {
+        return Ok(());
+    }
+
+    let task_name = tasks[task_index].clone();
+    let mut selected_action = 0usize;
+    loop {
+        let detail = scheduler.task_detail_text(&task_name).await?;
+        let actions = scheduler.task_selector_action_labels(&task_name).await?;
+        let action_index = select_terminal_option(
+            &mut stdout,
+            &format!("Task: {task_name}"),
+            &detail,
+            &actions,
+            &mut selected_action,
+        )?;
+        let action = &actions[action_index];
+        if action == "exit" {
+            return Ok(());
+        }
+        if action == "status" {
+            show_terminal_message(&mut stdout, &scheduler.task_status_text(&task_name).await?)?;
+        } else if action == "run" {
+            let outcome = scheduler.run_task_by_name(&task_name).await?;
+            show_terminal_message(
+                &mut stdout,
+                &format!(
+                    "Task `{}` finished with `{}` in `{}s`\n\n{}",
+                    task_name,
+                    outcome.status,
+                    outcome.duration_seconds,
+                    outcome.summary.trim()
+                ),
+            )?;
+        } else if action == "enable" {
+            scheduler.set_task_enabled_by_name(&task_name, true).await?;
+            show_terminal_message(&mut stdout, &format!("`{task_name}` enabled"))?;
+        } else if action == "disable" {
+            scheduler
+                .set_task_enabled_by_name(&task_name, false)
+                .await?;
+            show_terminal_message(&mut stdout, &format!("`{task_name}` disabled"))?;
+        }
+    }
+}
+
+struct RawTerminalGuard;
+
+impl RawTerminalGuard {
+    fn enter(stdout: &mut io::Stdout) -> Result<Self> {
+        terminal::enable_raw_mode()?;
+        execute!(stdout, cursor::Hide)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for RawTerminalGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
+        let _ = execute!(io::stdout(), cursor::Show);
+    }
+}
+
+fn select_terminal_option(
+    stdout: &mut io::Stdout,
+    title: &str,
+    body: &str,
+    options: &[String],
+    selected: &mut usize,
+) -> Result<usize> {
+    if options.is_empty() {
+        bail!("no selector options available");
+    }
+    *selected = (*selected).min(options.len().saturating_sub(1));
+
+    loop {
+        render_terminal_selector(stdout, title, body, options, *selected)?;
+        match event::read()? {
+            Event::Key(key) => match key.code {
+                KeyCode::Up => *selected = selected.saturating_sub(1),
+                KeyCode::Down => *selected = (*selected + 1).min(options.len() - 1),
+                KeyCode::Enter => return Ok(*selected),
+                KeyCode::Esc | KeyCode::Char('q') => return Ok(options.len() - 1),
+                KeyCode::Char(ch) if ch.is_ascii_digit() => {
+                    let index = ch.to_digit(10).unwrap_or_default() as usize;
+                    if (1..=options.len()).contains(&index) {
+                        *selected = index - 1;
+                        return Ok(*selected);
+                    }
+                }
+                _ => {}
+            },
+            Event::Resize(_, _) => {}
+            _ => {}
+        }
+    }
+}
+
+fn render_terminal_selector(
+    stdout: &mut io::Stdout,
+    title: &str,
+    body: &str,
+    options: &[String],
+    selected: usize,
+) -> Result<()> {
+    execute!(
+        stdout,
+        terminal::Clear(ClearType::All),
+        cursor::MoveTo(0, 0)
+    )?;
+    write_terminal_line(stdout, title)?;
+    write_terminal_line(stdout, "")?;
+    for line in body.lines() {
+        write_terminal_line(stdout, line)?;
+    }
+    if !body.trim().is_empty() {
+        write_terminal_line(stdout, "")?;
+    }
+    for (index, option) in options.iter().enumerate() {
+        let marker = if index == selected { ">" } else { " " };
+        write_terminal_line(stdout, &format!("{marker} {}. {option}", index + 1))?;
+    }
+    stdout.flush()?;
+    Ok(())
+}
+
+fn show_terminal_message(stdout: &mut io::Stdout, message: &str) -> Result<()> {
+    execute!(
+        stdout,
+        terminal::Clear(ClearType::All),
+        cursor::MoveTo(0, 0)
+    )?;
+    for line in message.lines() {
+        write_terminal_line(stdout, line)?;
+    }
+    write_terminal_line(stdout, "")?;
+    write_terminal_line(stdout, "Press any key to continue.")?;
+    stdout.flush()?;
+    loop {
+        if let Event::Key(_) = event::read()? {
+            return Ok(());
+        }
+    }
+}
+
+fn write_terminal_line(stdout: &mut io::Stdout, line: &str) -> Result<()> {
+    write!(stdout, "{line}\r\n")?;
+    Ok(())
 }
 
 async fn chat_new(config: Config, runner: Option<String>) -> Result<()> {
@@ -398,23 +624,19 @@ async fn run_local_chat_turn(
 async fn send_telegram(
     config: &Config,
     message: Option<String>,
-    photo: Option<PathBuf>,
-    document: Option<PathBuf>,
+    attachment: Option<PathBuf>,
     caption: Option<String>,
 ) -> Result<()> {
-    let selected = message.is_some() as u8 + photo.is_some() as u8 + document.is_some() as u8;
+    let selected = message.is_some() as u8 + attachment.is_some() as u8;
     if selected != 1 {
-        bail!("provide exactly one of <message>, --photo, or --document");
+        bail!("provide exactly one of <message> or --attachment");
     }
 
     if let Some(message) = message {
         return telegram::send_text(config, &message).await;
     }
-    if let Some(photo) = photo {
-        return telegram::send_photo(config, &photo, caption.as_deref()).await;
-    }
-    if let Some(document) = document {
-        return telegram::send_document(config, &document, caption.as_deref()).await;
+    if let Some(attachment) = attachment {
+        return telegram::send_attachment(config, &attachment, caption.as_deref()).await;
     }
 
     unreachable!("selected count guarantees one Telegram mode")
