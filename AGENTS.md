@@ -57,8 +57,7 @@ TinyButler/
   AGENTS.md      # agent entry point, documentation map, and development workflow
   Cargo.toml     # Rust package metadata and dependencies
   docs/          # focused internal design notes
-  skills/        # installed-TinyButler operation skills for code agents
-  templates/     # files copied into initialized TinyButler homes
+  templates/     # files copied into initialized TinyButler homes, including .agents/skills
   tests/         # repository-level integration tests
   src/
     lib.rs            # library module exports
@@ -121,10 +120,10 @@ Write clear comments for human code review. Each source file should start with a
 
 - `make`: build the debug binary with `cargo build`.
 - `make verify`: run `cargo fmt`, `cargo check`, `cargo test`, and `cargo clippy -- -D warnings`.
-- `make install`: install the release binary, initialize `~/.tinybutler` when it does not already exist, install or refresh project skills under `${CODEX_HOME:-$HOME/.codex}/skills/`, write and start the user service, and try to enable linger for boot startup.
-- `make uninstall`: stop and disable the user service, remove the service file, remove the installed binary, and remove the installed TinyButler project skill directory.
+- `make install`: install the release binary, run `tinybutler init` to create missing home files and refresh project skills under `~/.tinybutler/.agents/skills/`, initialize `~/.tinybutler` as a git repository when needed, write the user service, enable and restart it, and try to enable linger for boot startup.
+- `make uninstall`: stop and disable the user service, remove the service file, remove the installed binary, and remove the installed TinyButler project skill directory from `~/.tinybutler/.agents/skills/`.
 - `make service-status`: show the user service status.
-- `make sync`: commit and push `AGENTS.md` and `docs/*.md` after recording agreed decisions, requirements, and implementation rules in `AGENTS.md` or the relevant authoritative design note. Keep `README.md` and `skills/` aligned when those docs change user or installed-agent guidance, and never commit real Telegram tokens or chat ids.
+- `make sync`: commit and push `AGENTS.md` and `docs/*.md` after recording agreed decisions, requirements, and implementation rules in `AGENTS.md` or the relevant authoritative design note. Keep `README.md` and `templates/.agents/skills/` aligned when those docs change user or installed-agent guidance, and never commit real Telegram tokens or chat ids.
 
 `CARGO_INSTALL_ARGS` defaults to `--force` for `make install`. Pass Cargo install options through it, for example `make install CARGO_INSTALL_ARGS='--root ~/.local --force'`.
 

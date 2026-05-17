@@ -40,7 +40,7 @@ A code agent may request an outbound attachment by putting `ATTACH:<path-or-url>
 
 TinyButler must parse `ATTACH:` lines, remove them from visible Telegram text, validate the referenced files, and send allowed local files using the most suitable Telegram attachment method for their type.
 
-Local `ATTACH:` paths may be absolute, home-relative with `~/`, or relative to the chat agent working directory. Resolve and validate local paths before upload.
+Local `ATTACH:` paths may be absolute, home-relative with `~/`, or relative to the chat agent working directory. Chat agents run from the TinyButler home, for example `~/.tinybutler`, so relative attachment paths resolve there. Resolve and validate local paths before upload.
 
 Do not treat arbitrary plain text or secret-like files as sendable attachments.
 

@@ -256,8 +256,8 @@ timeout: 1800
 Allowed `type` values:
 
 - `command`: runs `run.sh` through shell from the task directory.
-- `agent`: reads `agent.md` as the prompt and runs a configured code-agent
-  runner.
+- `agent`: reads `agent.md` as the task-owned prompt, prepends TinyButler
+  runtime context, and runs a configured code-agent runner.
 
 Do not add these fields to `task.yaml`:
 

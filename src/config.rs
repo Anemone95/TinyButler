@@ -133,16 +133,28 @@ async fn copy_templates_into_home(home: &Path) -> Result<()> {
         })?;
         while let Some(entry) = entries.next_entry().await? {
             let file_type = entry.file_type().await?;
+            let target_path = target_dir.join(entry.file_name());
             if file_type.is_dir() {
+                if relative_dir == Path::new(".agents/skills") {
+                    remove_existing_template_skill(&target_path).await?;
+                }
                 pending_dirs.push(entry.path());
             } else if file_type.is_file() {
-                copy_template_file_if_missing(&entry.path(), &target_dir.join(entry.file_name()))
-                    .await?;
+                copy_template_file_if_missing(&entry.path(), &target_path).await?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Remove one installed template-owned skill before copying a fresh version.
+async fn remove_existing_template_skill(target: &Path) -> Result<()> {
+    match fs::remove_dir_all(target).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("failed to remove {}", target.display())),
+    }
 }
 
 /// Copy one template file only when the user has not already created it.

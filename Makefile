@@ -3,8 +3,9 @@
 CARGO ?= cargo
 CARGO_HOME ?= $(HOME)/.cargo
 CARGO_INSTALL_ARGS ?= --force
-CODEX_HOME ?= $(HOME)/.codex
-CODEX_SKILLS_DIR ?= $(CODEX_HOME)/skills
+TINYBUTLER_HOME ?= $(HOME)/.tinybutler
+TINYBUTLER_SKILLS_DIR ?= $(TINYBUTLER_HOME)/.agents/skills
+TINYBUTLER_SKILL_SOURCE_DIR ?= templates/.agents/skills
 SYSTEMD_USER_DIR ?= $(HOME)/.config/systemd/user
 SERVICE_NAME ?= tinybutler.service
 SERVICE_FILE := $(SYSTEMD_USER_DIR)/$(SERVICE_NAME)
@@ -37,7 +38,7 @@ clippy:
 verify: fmt check test clippy
 
 # Install with Cargo and enable the user-level systemd daemon.
-install: install-skills
+install:
 	$(CARGO) install --path . $(CARGO_INSTALL_ARGS)
 	install -d "$(SYSTEMD_USER_DIR)"
 	@install_root="$${CARGO_INSTALL_ROOT:-$${CARGO_HOME:-$(CARGO_HOME)}}"; \
@@ -50,10 +51,11 @@ install: install-skills
 		shift || true; \
 	done; \
 	bin="$${install_root%/}/bin/tinybutler"; \
-	if [ ! -d "$(HOME)/.tinybutler" ]; then \
-		"$$bin" init; \
+	"$$bin" --home "$(TINYBUTLER_HOME)" init; \
+	if [ ! -d "$(TINYBUTLER_HOME)/.git" ]; then \
+		git -C "$(TINYBUTLER_HOME)" init; \
 	else \
-		printf '%s\n' "TinyButler home already exists at $(HOME)/.tinybutler; skipping init"; \
+		printf '%s\n' "TinyButler home git repository already exists at $(TINYBUTLER_HOME)/.git"; \
 	fi; \
 	printf '%s\n' \
 		'[Unit]' \
@@ -63,7 +65,7 @@ install: install-skills
 		'' \
 		'[Service]' \
 		'Type=simple' \
-		"ExecStart=$$bin daemon" \
+		"ExecStart=$$bin --home $(TINYBUTLER_HOME) daemon" \
 		'Restart=on-failure' \
 		'RestartSec=5' \
 		'Environment=RUST_LOG=tinybutler=info' \
@@ -71,23 +73,26 @@ install: install-skills
 		'[Install]' \
 		'WantedBy=default.target' \
 		> "$(SERVICE_FILE)"; \
-	printf '%s\n' "Wrote $(SERVICE_FILE) with ExecStart=$$bin daemon"
+	printf '%s\n' "Wrote $(SERVICE_FILE) with ExecStart=$$bin --home $(TINYBUTLER_HOME) daemon"
+	$(MAKE) install-skills
 	@if command -v loginctl >/dev/null 2>&1; then \
 		loginctl enable-linger "$$USER" || printf '%s\n' 'warning: failed to enable lingering; user service may start only after login'; \
 	fi
 	systemctl --user daemon-reload
-	systemctl --user enable --now "$(SERVICE_NAME)"
-	@printf '%s\n' "Enabled $(SERVICE_NAME)"
+	systemctl --user enable "$(SERVICE_NAME)"
+	systemctl --user restart "$(SERVICE_NAME)"
+	@printf '%s\n' "Enabled and restarted $(SERVICE_NAME)"
 
-# Install project-owned Codex skills for agents launched outside this repository.
+# Install project-owned Codex skills into TinyButler home repo scope.
 install-skills:
-	install -d "$(CODEX_SKILLS_DIR)"
-	@for skill in skills/*; do \
+	install -d "$(TINYBUTLER_SKILLS_DIR)"
+	@rm -rf "$(HOME)/.codex/skills/tinybutler-operations"
+	@for skill in "$(TINYBUTLER_SKILL_SOURCE_DIR)"/*; do \
 		if [ -d "$$skill" ]; then \
 			name="$$(basename "$$skill")"; \
-			rm -rf "$(CODEX_SKILLS_DIR)/$$name"; \
-			cp -R "$$skill" "$(CODEX_SKILLS_DIR)/$$name"; \
-			printf '%s\n' "Installed TinyButler skill $(CODEX_SKILLS_DIR)/$$name"; \
+			rm -rf "$(TINYBUTLER_SKILLS_DIR)/$$name"; \
+			cp -R "$$skill" "$(TINYBUTLER_SKILLS_DIR)/$$name"; \
+			printf '%s\n' "Installed TinyButler skill $(TINYBUTLER_SKILLS_DIR)/$$name"; \
 		fi; \
 	done
 
@@ -104,7 +109,7 @@ uninstall:
 		shift || true; \
 	done; \
 	rm -f "$(SERVICE_FILE)" "$${install_root%/}/bin/tinybutler"; \
-	rm -rf "$(CODEX_SKILLS_DIR)/tinybutler-operations"
+	rm -rf "$(TINYBUTLER_SKILLS_DIR)/tinybutler-operations" "$(HOME)/.codex/skills/tinybutler-operations"
 	-systemctl --user daemon-reload
 
 # Show the installed user service status.

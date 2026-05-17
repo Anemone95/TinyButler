@@ -127,6 +127,9 @@ fn init_then_check_creates_valid_home() {
 
     assert!(home.join("tasks/smoke-task/task.yaml").exists());
     assert!(home.join("tasks/regular-check/run.sh").exists());
+    assert!(home
+        .join(".agents/skills/tinybutler-operations/SKILL.md")
+        .exists());
 
     let template_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     for relative_path in relative_files(&template_root) {
@@ -141,6 +144,28 @@ fn init_then_check_creates_valid_home() {
             relative_path.display()
         );
     }
+}
+
+#[test]
+fn init_refreshes_repo_scoped_operation_skill() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let installed_skill = home.join(".agents/skills/tinybutler-operations/SKILL.md");
+    std::fs::write(&installed_skill, "stale skill\n").expect("write stale skill");
+
+    let refresh = run_tinybutler(home, &["init"]);
+    assert!(refresh.status.success(), "{}", stderr(&refresh));
+
+    let template_skill = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("templates/.agents/skills/tinybutler-operations/SKILL.md");
+    assert_eq!(
+        std::fs::read_to_string(&installed_skill).expect("installed skill"),
+        std::fs::read_to_string(&template_skill).expect("template skill")
+    );
 }
 
 #[test]

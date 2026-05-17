@@ -18,9 +18,10 @@ use crossterm::terminal::{self, ClearType};
 use tracing_subscriber::EnvFilter;
 
 use tinybutler::chat::{
-    codex_streaming_runner_keys, load_recovered_chat_state, mark_turn_aborting, mark_turn_finished,
-    mark_turn_started, ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatRuntimeState,
-    ChatSession, ChatStateValue, CodexChatAgent,
+    chat_working_directory, codex_streaming_runner_keys, load_recovered_chat_state,
+    mark_turn_aborting, mark_turn_finished, mark_turn_started, ChatAgent, ChatEvent,
+    ChatInstructionContext, ChatLock, ChatRuntimeState, ChatSession, ChatStateValue,
+    CodexChatAgent,
 };
 use tinybutler::config::Config;
 use tinybutler::scheduler::Scheduler;
@@ -120,6 +121,14 @@ async fn main() -> Result<()> {
         Command::Daemon { interval_seconds } => {
             let scheduler = Scheduler::new(config.clone());
             if telegram_configured(&config) {
+                if let Err(err) = telegram::send_text(
+                    &config,
+                    &telegram::daemon_startup_notification_text(&config),
+                )
+                .await
+                {
+                    tracing::warn!("failed to send Telegram daemon startup notification: {err:#}");
+                }
                 tokio::select! {
                     result = scheduler.run_loop(Duration::from_secs(interval_seconds)) => result,
                     result = telegram::poll(config) => result,
@@ -423,7 +432,7 @@ async fn chat_new(config: Config, runner: Option<String>) -> Result<()> {
     let mut agent = CodexChatAgent::connect_with_context(
         runner.clone(),
         agent_config,
-        Some(std::env::current_dir()?),
+        Some(chat_working_directory(&config)),
         ChatInstructionContext::LocalCli,
     )
     .await?;
@@ -448,7 +457,7 @@ async fn chat_session(config: Config, session_id: Option<String>) -> Result<()> 
     let mut agent = CodexChatAgent::connect_with_context(
         session.runner.clone(),
         agent_config,
-        Some(std::env::current_dir()?),
+        Some(chat_working_directory(&config)),
         ChatInstructionContext::LocalCli,
     )
     .await?;

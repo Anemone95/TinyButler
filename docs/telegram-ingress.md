@@ -51,7 +51,7 @@ Telegram bot menu descriptions should be short and must not include the project 
 
 ## Menu Refresh
 
-On each daemon startup, TinyButler must refresh the Telegram bot menu with the current slash-command surface.
+On each daemon startup, TinyButler must send a short Telegram restart notification to the configured chat and refresh the Telegram bot menu with the current slash-command surface.
 
 TinyButler should call `setMyCommands` for both the default bot-command scope and the configured chat scope.
 

@@ -76,6 +76,8 @@ On adapter error, timeout, or nonzero exit, TinyButler must clear busy state, pe
 
 Chat bridge instructions given to Codex or future adapters must be transport-specific.
 
+Interactive chat agents always run with the TinyButler home as their working directory, for example `~/.tinybutler`. They must not inherit the shell or daemon launch directory as their workspace.
+
 Telegram-created or explicitly Telegram-resumed sessions should tell the model that it is behind TinyButler's Telegram bridge, must not expose chain-of-thought, and should either call `tinybutler telegram --attachment <path>` directly or include `ATTACH:<path>` on its own line when it creates an image, screenshot, or other artifact for the user.
 
 Local CLI-created or explicitly CLI-resumed sessions should tell the model it is in the local TinyButler REPL, must not expose chain-of-thought, and should print local file paths for artifacts instead of assuming Telegram delivery.

@@ -60,7 +60,7 @@ timeout: 1800
 
 ## Agent Tasks
 
-Agent tasks use `type: agent`, read `agent.md` as the prompt, and require a configured runner.
+Agent tasks use `type: agent`, read `agent.md` as the task-owned prompt, prepend TinyButler runtime context, and require a configured runner.
 
 ```yaml
 name: smoke-task

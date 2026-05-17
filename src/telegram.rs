@@ -21,15 +21,23 @@ use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 
 use crate::chat::{
-    codex_streaming_runner_keys, load_recovered_chat_state, mark_chat_inactive, mark_turn_finished,
-    mark_turn_started, ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatSession,
-    ChatStateValue, CodexChatAgent,
+    chat_working_directory, codex_streaming_runner_keys, load_recovered_chat_state,
+    mark_chat_inactive, mark_turn_finished, mark_turn_started, ChatAgent, ChatEvent,
+    ChatInstructionContext, ChatLock, ChatSession, ChatStateValue, CodexChatAgent,
 };
 use crate::config::Config;
 use crate::scheduler::Scheduler;
 
 /// Telegram parse mode used by TinyButler-generated and CLI-authored messages.
 pub const TELEGRAM_PARSE_MODE: &str = "MarkdownV2";
+
+/// Build the daemon startup notification sent when Telegram is configured.
+pub fn daemon_startup_notification_text(config: &Config) -> String {
+    format!(
+        "**TinyButler daemon restarted**\n**home:** {}",
+        inline_code(&config.home.display().to_string())
+    )
+}
 
 /// Parsed Telegram command supported by TinyButler ingress.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -655,7 +663,7 @@ async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Re
         let mut agent = CodexChatAgent::connect_with_context(
             runner.to_string(),
             agent_config,
-            Some(std::env::current_dir()?),
+            Some(chat_working_directory(config)),
             ChatInstructionContext::Telegram,
         )
         .await?;
@@ -710,7 +718,7 @@ async fn handle_session_callback(config: &Config, chat_id: &str, session_id: &st
         let mut agent = CodexChatAgent::connect_with_context(
             session.runner.clone(),
             agent_config,
-            Some(std::env::current_dir()?),
+            Some(chat_working_directory(config)),
             ChatInstructionContext::Telegram,
         )
         .await?;
@@ -749,7 +757,7 @@ async fn run_telegram_chat_turn(
         .code_agents
         .get(&runner)
         .with_context(|| format!("missing code_agents.{runner}"))?;
-    let working_directory = std::env::current_dir()?;
+    let working_directory = chat_working_directory(&config);
     let mut agent = CodexChatAgent::connect_with_context(
         runner.clone(),
         agent_config,
@@ -1911,6 +1919,21 @@ mod tests {
         assert!(text.contains("code-agent"));
         assert!(rendered.contains("code\\-agent"));
         assert!(rendered.contains("*TinyButler commands:*"));
+    }
+
+    #[test]
+    fn daemon_startup_notification_is_common_markdown() {
+        let config = Config {
+            home: PathBuf::from("/tmp/tinybutler-home"),
+            telegram: Default::default(),
+            code_agents: Default::default(),
+        };
+        let text = daemon_startup_notification_text(&config);
+        let rendered = render_markdown_v2(&text);
+
+        assert!(text.contains("daemon restarted"));
+        assert!(text.contains("/tmp/tinybutler-home"));
+        assert!(rendered.contains("*TinyButler daemon restarted*"));
     }
 
     #[test]

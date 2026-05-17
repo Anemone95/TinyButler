@@ -18,6 +18,9 @@ use crate::config::{CodeAgentConfig, Config};
 use crate::state::TaskState;
 use crate::task::{SessionMode, Task, TaskType};
 
+const AGENT_TASK_CONTEXT: &str =
+    "now run under tinybutler, message reply should use tinybutler skills";
+
 /// Structured result of one scheduler execution attempt.
 #[derive(Debug, Clone)]
 pub struct RunOutcome {
@@ -172,6 +175,7 @@ async fn run_code_agent(
     let prompt = fs::read_to_string(&prompt_path)
         .await
         .with_context(|| format!("failed to read {}", prompt_path.display()))?;
+    let prompt = agent_task_prompt(&prompt);
 
     if task.session == SessionMode::Reuse {
         if let Some(session_id) = state.session_id.as_deref().filter(|s| !s.is_empty()) {
@@ -225,6 +229,10 @@ fn expand_agent_arg(arg: &str, task: &Task, prompt: &str, session_id: Option<&st
     arg.replace("{prompt}", prompt)
         .replace("{sessionId}", session_id.unwrap_or(""))
         .replace("{taskDir}", &task.dir.display().to_string())
+}
+
+fn agent_task_prompt(prompt: &str) -> String {
+    format!("{AGENT_TASK_CONTEXT}\n\n{prompt}")
 }
 
 async fn run_command(
@@ -309,5 +317,18 @@ fn find_string_key(value: &Value, keys: &[&str]) -> Option<String> {
         }
         Value::Array(values) => values.iter().find_map(|value| find_string_key(value, keys)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_task_prompt_includes_tinybutler_context() {
+        let prompt = agent_task_prompt("Inspect task state.");
+
+        assert!(prompt.starts_with(AGENT_TASK_CONTEXT));
+        assert!(prompt.contains("\n\nInspect task state."));
     }
 }

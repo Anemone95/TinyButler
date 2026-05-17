@@ -13,11 +13,12 @@ TinyButler stores local configuration and runtime files under `~/.tinybutler/` b
   telegram_state.json   # Telegram ingress offset state
   chat_state.json       # chat bridge runtime state
   chat.lock             # chat bridge mutation lock
+  .agents/skills/       # repo-scoped code-agent operation skills
   tasks/                # task directories
   .gitignore            # ignore template for logs and TinyButler-owned runtime files
 ```
 
-`tasks/*` is owned by [tasks.md](tasks.md). `telegram_state.json` is owned by [telegram-ingress.md](telegram-ingress.md). `chat_state.json` and `chat.lock` are owned by [chatbridge.md](chatbridge.md). `.gitignore` is copied from `templates/.gitignore` and is a configuration-owned ignore template for files that should not be managed by git.
+`tasks/*` is owned by [tasks.md](tasks.md). `telegram_state.json` is owned by [telegram-ingress.md](telegram-ingress.md). `chat_state.json` and `chat.lock` are owned by [chatbridge.md](chatbridge.md). `.agents/skills/*` is refreshed from `templates/.agents/skills/` on `tinybutler init` so code agents launched from the TinyButler home can discover the TinyButler operation skill. Other template files are copied only when missing. `.gitignore` is copied from `templates/.gitignore` and is a configuration-owned ignore template for files that should not be managed by git.
 
 ## Config File
 
@@ -53,7 +54,7 @@ Scheduled agent tasks use `args` for a fresh run.
 
 When `session: reuse` has a previous successful session id, scheduled agent tasks use `resume_args`.
 
-`{prompt}` is replaced with the task prompt when a runner needs prompt-in-args.
+`{prompt}` is replaced with the task prompt plus TinyButler runtime context when a runner needs prompt-in-args.
 
 `{sessionId}` is replaced with the previous successful session id for `session: reuse`.
 

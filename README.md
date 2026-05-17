@@ -20,7 +20,7 @@ Install the release binary and enable the user-level systemd daemon:
 make install
 ```
 
-`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs the release binary to `~/.cargo/bin/tinybutler`. It also initializes `~/.tinybutler` with `config.yaml`, `.gitignore`, and example tasks when that directory does not already exist. It installs the TinyButler operation skill under `${CODEX_HOME:-$HOME/.codex}/skills/`, writes `~/.config/systemd/user/tinybutler.service`, runs `systemctl --user enable --now tinybutler.service`, and tries to enable lingering so the service can start at boot. Pass extra Cargo install options through `CARGO_INSTALL_ARGS`:
+`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs the release binary to `~/.cargo/bin/tinybutler`. It runs `tinybutler init`, which creates missing home files without overwriting user config or tasks and refreshes the TinyButler operation skill under `~/.tinybutler/.agents/skills/`. It initializes `~/.tinybutler` as a git repository when `.git` is missing, writes `~/.config/systemd/user/tinybutler.service`, enables and restarts the user service, and tries to enable lingering so the service can start at boot. Pass extra Cargo install options through `CARGO_INSTALL_ARGS`:
 
 ```bash
 make install CARGO_INSTALL_ARGS='--root ~/.local --force'
@@ -113,7 +113,7 @@ telegram:
 
 TinyButler uses Telegram Bot HTTP API calls. `tinybutler telegram '<message>'`, attachment captions, compact daemon-generated summaries, shell task summaries, and chat-bridge code-agent replies are treated as ordinary Markdown and converted to Telegram MarkdownV2 before delivery. `tinybutler telegram --attachment <path>` chooses a Telegram attachment display from the file type and falls back to document-style delivery for ordinary files. Send arbitrary logs and large text as documents. Agent tasks may call `tinybutler telegram ...` themselves when they want to notify. The daemon sends fallback notifications for failures, and shell tasks notify when stdout is non-empty or when the task fails. The daemon stores Telegram long-polling offset state in `~/.tinybutler/telegram_state.json`.
 
-When `tinybutler daemon` starts with Telegram configured, it refreshes the bot slash-command menu for the configured chat so clients show the current command names and compact descriptions.
+When `tinybutler daemon` starts with Telegram configured, it sends a restart notification and refreshes the bot slash-command menu for the configured chat so clients show the current command names and compact descriptions.
 
 When the daemon is running, Telegram supports `/tasks` for the task selector and `/new`, `/session`, and `/abort` for the interactive code-agent chat bridge. `/tasks` opens a task button menu, `/new` opens a model menu, `/session` opens a resumable-session menu, and bare Telegram text is redirected to the active chat session after selection.
 

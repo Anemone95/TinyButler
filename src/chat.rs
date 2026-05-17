@@ -196,6 +196,11 @@ pub fn codex_chat_supported(agent: &CodeAgentConfig) -> bool {
     !agent.stream_args.is_empty() && agent.stream_args.iter().any(|arg| arg == "app-server")
 }
 
+/// Return the filesystem working directory used by interactive chat agents.
+pub fn chat_working_directory(config: &Config) -> PathBuf {
+    config.home.clone()
+}
+
 /// Load state, recover stale busy markers, and save if recovery changed it.
 pub async fn load_recovered_chat_state(config: &Config) -> Result<ChatRuntimeState> {
     let path = config.chat_state_path();
@@ -755,6 +760,20 @@ mod tests {
 
         assert_eq!(codex_streaming_runner_keys(&config), vec!["codex"]);
         assert_eq!(streaming_runner_keys(&config), vec!["codex", "gemini"]);
+    }
+
+    #[test]
+    fn chat_working_directory_is_tinybutler_home() {
+        let config = Config {
+            home: PathBuf::from("/tmp/tinybutler-chat-home"),
+            telegram: Default::default(),
+            code_agents: Default::default(),
+        };
+
+        assert_eq!(
+            chat_working_directory(&config),
+            PathBuf::from("/tmp/tinybutler-chat-home")
+        );
     }
 
     #[test]
