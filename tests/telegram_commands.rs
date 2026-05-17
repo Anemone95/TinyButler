@@ -1,6 +1,6 @@
 //! Telegram ingress command parsing tests.
 
-use tickclaw::telegram::{
+use tinybutler::telegram::{
     code_block, escape_markdown_v2, parse_ingress_command, sanitize_markdown_v2_message,
     IngressCommand, TelegramPollState, TELEGRAM_PARSE_MODE,
 };

@@ -1,6 +1,6 @@
 //! Task schema tests kept outside `src/` for implementation/test separation.
 
-use tickclaw::task::{Task, TaskType};
+use tinybutler::task::{Task, TaskType};
 
 /// Parse a task YAML snippet through the public task schema.
 fn parse_task(text: &str) -> Result<Task, serde_yaml::Error> {

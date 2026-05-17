@@ -1,6 +1,6 @@
-//! TickClaw home-directory configuration and initialization.
+//! TinyButler home-directory configuration and initialization.
 //!
-//! Configuration is read from `~/.tickclaw/config.yaml`. Runtime secrets stay
+//! Configuration is read from `~/.tinybutler/config.yaml`. Runtime secrets stay
 //! outside the repository, while templates here provide safe local defaults.
 
 use std::collections::BTreeMap;
@@ -10,11 +10,11 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-/// Parsed TickClaw configuration plus the resolved home directory.
+/// Parsed TinyButler configuration plus the resolved home directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Resolved TickClaw home, usually `~/.tickclaw`.
+    /// Resolved TinyButler home, usually `~/.tinybutler`.
     #[serde(skip)]
     pub home: PathBuf,
 
@@ -34,7 +34,7 @@ pub struct TelegramConfig {
     /// Bot token used in Telegram Bot API URLs.
     #[serde(default)]
     pub bot_token: Option<String>,
-    /// Chat id that receives TickClaw messages.
+    /// Chat id that receives TinyButler messages.
     #[serde(default)]
     pub chat_id: Option<String>,
 }
@@ -57,11 +57,11 @@ pub struct CodeAgentConfig {
 }
 
 impl Config {
-    /// Load config from `home_override` or from the user's default TickClaw home.
+    /// Load config from `home_override` or from the user's default TinyButler home.
     pub fn load(home_override: Option<PathBuf>) -> Result<Self> {
         let home = home_override
-            .or_else(|| dirs::home_dir().map(|p| p.join(".tickclaw")))
-            .context("could not determine TickClaw home")?;
+            .or_else(|| dirs::home_dir().map(|p| p.join(".tinybutler")))
+            .context("could not determine TinyButler home")?;
 
         let config_path = home.join("config.yaml");
         if !config_path.exists() {
@@ -105,16 +105,16 @@ impl Config {
         self.home.join("chat.lock")
     }
 
-    /// Create a safe initial TickClaw home without overwriting existing files.
+    /// Create a safe initial TinyButler home without overwriting existing files.
     pub async fn init_home(&self) -> Result<()> {
         copy_templates_into_home(&self.home).await?;
 
-        println!("Initialized TickClaw home at {}", self.home.display());
+        println!("Initialized TinyButler home at {}", self.home.display());
         Ok(())
     }
 }
 
-/// Copy repository templates into a TickClaw home without overwriting user files.
+/// Copy repository templates into a TinyButler home without overwriting user files.
 async fn copy_templates_into_home(home: &Path) -> Result<()> {
     let template_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let mut pending_dirs = vec![template_root.clone()];

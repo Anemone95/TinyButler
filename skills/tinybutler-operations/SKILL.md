@@ -1,79 +1,79 @@
 ---
-name: tickclaw-operations
-description: Operate and configure TickClaw. Use this when configuring TickClaw, creating scheduled command or agent tasks, sending Telegram notifications from code agents, inspecting task status, enabling or disabling tasks, or editing files under ~/.tickclaw; this guide is self-contained for agents that cannot read the Rust source.
+name: tinybutler-operations
+description: Operate and configure TinyButler. Use this when configuring TinyButler, creating scheduled command or agent tasks, sending Telegram notifications from code agents, inspecting task status, enabling or disabling tasks, or editing files under ~/.tinybutler; this guide is self-contained for agents that cannot read the Rust source.
 ---
 
-# TickClaw Operations
+# TinyButler Operations
 
-This skill is a model-neutral TickClaw guide for Codex, Claude, Gemini, and
+This skill is a model-neutral TinyButler guide for Codex, Claude, Gemini, and
 other code agents. It is only for operating and configuring an installed
-TickClaw instance. Prefer the public `tickclaw` CLI and the files under
-`~/.tickclaw/`.
+TinyButler instance. Prefer the public `tinybutler` CLI and the files under
+`~/.tinybutler/`.
 
-Use this skill when you need to configure TickClaw, create or edit scheduled
+Use this skill when you need to configure TinyButler, create or edit scheduled
 tasks, send Telegram notifications, inspect task status, or enable and disable
 tasks.
 
 ## Source Of Truth
 
-- Operate only through the installed `tickclaw` command and `~/.tickclaw/` files
+- Operate only through the installed `tinybutler` command and `~/.tinybutler/` files
   described here.
-- Do not require MCP for task management. TickClaw is managed by files and CLI
+- Do not require MCP for task management. TinyButler is managed by files and CLI
   commands.
-- TickClaw does not use Linux `cron`; it has its own daemon scheduler.
+- TinyButler does not use Linux `cron`; it has its own daemon scheduler.
 
 ## Essential CLI
 
 ```bash
-tickclaw init
+tinybutler init
 ```
 
-Create the TickClaw home directory, default config, and example tasks.
+Create the TinyButler home directory, default config, and example tasks.
 
 ```bash
-tickclaw check
+tinybutler check
 ```
 
-Validate `~/.tickclaw/config.yaml` and all task definitions under
-`~/.tickclaw/tasks/`.
+Validate `~/.tinybutler/config.yaml` and all task definitions under
+`~/.tinybutler/tasks/`.
 
 ```bash
-tickclaw daemon
+tinybutler daemon
 ```
 
 Start the scheduler loop. When Telegram is configured, the daemon also starts
 the Telegram long-polling command loop.
 
 ```bash
-tickclaw task list
+tinybutler task list
 ```
 
 List all tasks with enabled state, type, runner, schedule description, latest
 state, next run time, and counters.
 
 ```bash
-tickclaw task status <task>
+tinybutler task status <task>
 ```
 
 Show one task's `task.yaml` fields, `agent.md` or `run.sh` content, latest
 `state.json`, and the first 20 lines of the latest log.
 
 ```bash
-tickclaw task run <task>
+tinybutler task run <task>
 ```
 
 Run one task immediately through the public task-management surface.
 
 ```bash
-tickclaw task enable <task>
-tickclaw task disable <task>
+tinybutler task enable <task>
+tinybutler task disable <task>
 ```
 
 Set `enabled: true` or `enabled: false` in the task's `task.yaml`.
 
 ```bash
-tickclaw chat new
-tickclaw chat session
+tinybutler chat new
+tinybutler chat session
 ```
 
 Start a local interactive code-agent chat session or resume a previous one.
@@ -86,7 +86,7 @@ turn is running to abort that turn.
 Use Telegram for progress updates when operating remotely.
 
 ```bash
-tickclaw telegram 'MarkdownV2 *message* text'
+tinybutler telegram 'MarkdownV2 *message* text'
 ```
 
 Send a MarkdownV2 message to the configured Telegram chat. Escape dynamic
@@ -94,8 +94,8 @@ content before inserting it into MarkdownV2. Put task names, paths, and other
 dynamic values in code spans when possible.
 
 ```bash
-tickclaw telegram --photo /path/to/image.png --caption 'MarkdownV2 caption'
-tickclaw telegram --document /path/to/file --caption 'MarkdownV2 caption'
+tinybutler telegram --photo /path/to/image.png --caption 'MarkdownV2 caption'
+tinybutler telegram --document /path/to/file --caption 'MarkdownV2 caption'
 ```
 
 Send a photo or document with an optional MarkdownV2 caption. Use documents for
@@ -103,10 +103,10 @@ large logs, scripts, reports, and arbitrary text blocks.
 
 Operational guidance:
 
-- Telegram secrets live only in `~/.tickclaw/config.yaml`.
+- Telegram secrets live only in `~/.tinybutler/config.yaml`.
 - Never print, commit, or copy real bot tokens or chat ids into shared files.
-- CLI `tickclaw telegram ...` messages and captions are MarkdownV2-formatted.
-- TickClaw sanitizes CLI-authored Telegram text before sending so ordinary
+- CLI `tinybutler telegram ...` messages and captions are MarkdownV2-formatted.
+- TinyButler sanitizes CLI-authored Telegram text before sending so ordinary
   punctuation does not break Telegram parsing.
 - Escape MarkdownV2 control characters in user-controlled text:
 
@@ -115,7 +115,7 @@ Operational guidance:
   ```
 - Daemon-generated compact summaries use Telegram MarkdownV2 internally and must
   escape user-controlled content.
-- Agent tasks may call `tickclaw telegram ...` themselves when a notification is
+- Agent tasks may call `tinybutler telegram ...` themselves when a notification is
   useful. The daemon does not auto-notify successful agent tasks.
 - The daemon sends fallback Telegram notifications for task failures, timeouts,
   and lock conflicts.
@@ -144,12 +144,12 @@ without deleting the resumable session.
 ## Runtime Layout
 
 ```text
-~/.tickclaw/
+~/.tinybutler/
   config.yaml
   telegram_state.json
   chat_state.json
   chat.lock
-  tickclaw.log
+  tinybutler.log
   tasks/
     <task-name>/
       task.yaml
@@ -158,7 +158,7 @@ without deleting the resumable session.
       data/
       logs/
       state.json
-      .tickclaw.lock
+      .tinybutler.lock
 ```
 
 Task-owned files:
@@ -175,20 +175,20 @@ Runtime-owned files:
 
 - `state.json`
 - `logs/`
-- `.tickclaw.lock`
-- `~/.tickclaw/telegram_state.json`
-- `~/.tickclaw/chat_state.json`
-- `~/.tickclaw/chat.lock`
+- `.tinybutler.lock`
+- `~/.tinybutler/telegram_state.json`
+- `~/.tinybutler/chat_state.json`
+- `~/.tinybutler/chat.lock`
 
 Do not manually edit runtime-owned files or `data/` unless explicitly debugging
 runtime state corruption or task output issues.
 
-## Configuring TickClaw
+## Configuring TinyButler
 
 Local config file:
 
 ```text
-~/.tickclaw/config.yaml
+~/.tinybutler/config.yaml
 ```
 
 Minimal Telegram config:
@@ -272,7 +272,7 @@ Do not add these fields to `task.yaml`:
 Every task runs from its own directory:
 
 ```text
-~/.tickclaw/tasks/<task-name>/
+~/.tinybutler/tasks/<task-name>/
 ```
 
 ## Command Task Template
@@ -280,7 +280,7 @@ Every task runs from its own directory:
 Directory:
 
 ```text
-~/.tickclaw/tasks/regular-check/
+~/.tinybutler/tasks/regular-check/
 ```
 
 `task.yaml`:
@@ -309,7 +309,7 @@ Command tasks must not define `runner`.
 Directory:
 
 ```text
-~/.tickclaw/tasks/smoke-task/
+~/.tinybutler/tasks/smoke-task/
 ```
 
 `task.yaml`:
@@ -329,13 +329,13 @@ timeout: 3600
 ```markdown
 Inspect this task directory and report any important findings.
 
-Use `tickclaw telegram "..."` only when the result is useful to send.
+Use `tinybutler telegram "..."` only when the result is useful to send.
 ```
 
 Agent task fields:
 
 - `runner`: required key under `code_agents.<runner>` in
-  `~/.tickclaw/config.yaml`.
+  `~/.tinybutler/config.yaml`.
 - `session`: `independent` starts a new agent session every run. `reuse`
   resumes the previous successful session when the runner supports resume.
 
@@ -346,52 +346,52 @@ When creating or changing a task:
 1. Send a short Telegram note if useful:
 
    ```bash
-   tickclaw telegram 'TickClaw: updating task `<task-name>`'
+   tinybutler telegram 'TinyButler: updating task `<task-name>`'
    ```
 
 2. Create or edit files under:
 
    ```text
-   ~/.tickclaw/tasks/<task-name>/
+   ~/.tinybutler/tasks/<task-name>/
    ```
 
-3. Validate all TickClaw-controlled files:
+3. Validate all TinyButler-controlled files:
 
    ```bash
-   tickclaw check
+   tinybutler check
    ```
 
 4. Inspect the task:
 
    ```bash
-   tickclaw task status <task-name>
+   tinybutler task status <task-name>
    ```
 
 5. Run the task manually when safe:
 
    ```bash
-   tickclaw task run <task-name>
+   tinybutler task run <task-name>
    ```
 
 6. Check the task list:
 
    ```bash
-   tickclaw task list
+   tinybutler task list
    ```
 
 7. Send the result or attach a log if useful:
 
    ```bash
-   tickclaw telegram 'TickClaw: task `<task-name>` updated and validated'
-   tickclaw telegram --document ~/.tickclaw/tasks/<task-name>/logs/<log>.log --caption 'latest log'
+   tinybutler telegram 'TinyButler: task `<task-name>` updated and validated'
+   tinybutler telegram --document ~/.tinybutler/tasks/<task-name>/logs/<log>.log --caption 'latest log'
    ```
 
 ## Scheduler Semantics
 
-- TickClaw does not backfill missed scheduled runs.
+- TinyButler does not backfill missed scheduled runs.
 - On daemon startup or schedule change, `next_run_at` is recomputed as the first
   future occurrence after now.
-- Manual `tickclaw task run <task>` updates last-run fields and counters, but it
+- Manual `tinybutler task run <task>` updates last-run fields and counters, but it
   does not shift a future scheduled `next_run_at` unless the task was already
   due.
 - Task success, failure, timeout, and lock conflict all record state. Scheduled

@@ -20,7 +20,7 @@ use crate::state::TaskState;
 use crate::task::{Task, TaskType};
 use crate::telegram;
 
-/// Long-running scheduler bound to one TickClaw home directory.
+/// Long-running scheduler bound to one TinyButler home directory.
 pub struct Scheduler {
     config: Config,
 }
@@ -35,7 +35,7 @@ impl Scheduler {
     pub async fn run_loop(&self, interval: Duration) -> Result<()> {
         fs::create_dir_all(self.config.tasks_dir()).await?;
         info!(
-            "TickClaw daemon started with home {}",
+            "TinyButler daemon started with home {}",
             self.config.home.display()
         );
         self.reconcile_startup_schedules().await?;
@@ -48,7 +48,7 @@ impl Scheduler {
             tokio::select! {
                 _ = sleep(interval) => {}
                 _ = tokio::signal::ctrl_c() => {
-                    info!("TickClaw daemon stopped");
+                    info!("TinyButler daemon stopped");
                     return Ok(());
                 }
             }

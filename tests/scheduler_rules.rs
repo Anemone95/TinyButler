@@ -2,13 +2,13 @@
 
 use std::path::PathBuf;
 
-use tickclaw::config::Config;
-use tickclaw::runner::RunOutcome;
-use tickclaw::scheduler::{
+use tinybutler::config::Config;
+use tinybutler::runner::RunOutcome;
+use tinybutler::scheduler::{
     describe_schedule, format_schedule_for_display, normalize_cron, set_enabled_in_task_yaml,
     Scheduler,
 };
-use tickclaw::task::{SessionMode, Task, TaskType};
+use tinybutler::task::{SessionMode, Task, TaskType};
 
 /// Build a minimal task for notification-rule assertions.
 fn task(task_type: TaskType) -> Task {
@@ -75,7 +75,7 @@ fn updates_or_inserts_enabled_field_in_task_yaml() {
 #[test]
 fn notification_rules_match_task_type_and_result() {
     let scheduler = Scheduler::new(Config {
-        home: PathBuf::from("/tmp/tickclaw"),
+        home: PathBuf::from("/tmp/tinybutler"),
         telegram: Default::default(),
         code_agents: Default::default(),
     });

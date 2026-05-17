@@ -1,10 +1,10 @@
-# Build, install, and repository maintenance shortcuts for TickClaw.
+# Build, install, and repository maintenance shortcuts for TinyButler.
 
 CARGO ?= cargo
 CARGO_HOME ?= $(HOME)/.cargo
 CARGO_INSTALL_ARGS ?= --force
 SYSTEMD_USER_DIR ?= $(HOME)/.config/systemd/user
-SERVICE_NAME ?= tickclaw.service
+SERVICE_NAME ?= tinybutler.service
 SERVICE_FILE := $(SYSTEMD_USER_DIR)/$(SERVICE_NAME)
 
 .DEFAULT_GOAL := build
@@ -47,10 +47,10 @@ install:
 		esac; \
 		shift || true; \
 	done; \
-	bin="$${install_root%/}/bin/tickclaw"; \
+	bin="$${install_root%/}/bin/tinybutler"; \
 	printf '%s\n' \
 		'[Unit]' \
-		'Description=TickClaw scheduler daemon' \
+		'Description=TinyButler scheduler daemon' \
 		'After=network-online.target' \
 		'Wants=network-online.target' \
 		'' \
@@ -59,7 +59,7 @@ install:
 		"ExecStart=$$bin daemon" \
 		'Restart=on-failure' \
 		'RestartSec=5' \
-		'Environment=RUST_LOG=tickclaw=info' \
+		'Environment=RUST_LOG=tinybutler=info' \
 		'' \
 		'[Install]' \
 		'WantedBy=default.target' \
@@ -84,7 +84,7 @@ uninstall:
 		esac; \
 		shift || true; \
 	done; \
-	rm -f "$(SERVICE_FILE)" "$${install_root%/}/bin/tickclaw"
+	rm -f "$(SERVICE_FILE)" "$${install_root%/}/bin/tinybutler"
 	-systemctl --user daemon-reload
 
 # Show the installed user service status.

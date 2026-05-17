@@ -1,6 +1,6 @@
 //! Per-task lock file management.
 //!
-//! TickClaw uses `create_new` on `.tickclaw.lock` to prevent duplicate task
+//! TinyButler uses `create_new` on `.tinybutler.lock` to prevent duplicate task
 //! executions without a central lock service.
 
 use std::fs::{File, OpenOptions};
@@ -17,7 +17,7 @@ pub struct TaskLock {
 impl TaskLock {
     /// Try to acquire a task lock, returning `None` when another run owns it.
     pub fn acquire(task_dir: &Path) -> Result<Option<Self>> {
-        let path = task_dir.join(".tickclaw.lock");
+        let path = task_dir.join(".tinybutler.lock");
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => Ok(Some(Self { path, _file: file })),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),

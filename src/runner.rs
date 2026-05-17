@@ -135,7 +135,7 @@ pub async fn run_failure(task: &Task, status: &str, stderr: &str) -> Result<RunO
     })
 }
 
-/// Raw child-process output before TickClaw maps it to task state.
+/// Raw child-process output before TinyButler maps it to task state.
 #[derive(Debug)]
 struct ProcessOutput {
     exit_code: Option<i32>,

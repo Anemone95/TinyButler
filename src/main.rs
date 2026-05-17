@@ -1,4 +1,4 @@
-//! TickClaw command-line entry point.
+//! TinyButler command-line entry point.
 //!
 //! The CLI is the primary public command surface. Telegram slash commands are
 //! expected to map back to these local commands rather than introduce separate
@@ -13,21 +13,21 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use tickclaw::chat::{
+use tinybutler::chat::{
     codex_streaming_runner_keys, load_recovered_chat_state, mark_turn_aborting, mark_turn_finished,
     mark_turn_started, ChatAgent, ChatEvent, ChatLock, ChatRuntimeState, ChatSession,
     ChatStateValue, CodexChatAgent,
 };
-use tickclaw::config::Config;
-use tickclaw::scheduler::Scheduler;
-use tickclaw::telegram;
+use tinybutler::config::Config;
+use tinybutler::scheduler::Scheduler;
+use tinybutler::telegram;
 
-/// Top-level TickClaw CLI options.
+/// Top-level TinyButler CLI options.
 #[derive(Debug, Parser)]
-#[command(name = "tickclaw")]
+#[command(name = "tinybutler")]
 #[command(about = "Local file-managed scheduler for agent tasks")]
 struct Cli {
-    /// Override the TickClaw home directory for tests or isolated installs.
+    /// Override the TinyButler home directory for tests or isolated installs.
     #[arg(long)]
     home: Option<PathBuf>,
 
@@ -36,10 +36,10 @@ struct Cli {
     command: Command,
 }
 
-/// Public TickClaw command surface.
+/// Public TinyButler command surface.
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Create a local TickClaw home with safe example tasks.
+    /// Create a local TinyButler home with safe example tasks.
     Init,
     /// Start the scheduler loop.
     Daemon {
@@ -77,7 +77,7 @@ enum Command {
     },
 }
 
-/// Public `tickclaw task ...` command surface.
+/// Public `tinybutler task ...` command surface.
 #[derive(Debug, Subcommand)]
 enum TaskCommand {
     /// List all tasks and their latest state summary.
@@ -92,7 +92,7 @@ enum TaskCommand {
     Disable { task: String },
 }
 
-/// Public `tickclaw chat ...` command surface.
+/// Public `tinybutler chat ...` command surface.
 #[derive(Debug, Subcommand)]
 enum ChatCommand {
     /// Start a new interactive chat session.

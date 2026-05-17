@@ -33,7 +33,7 @@ pub struct TaskState {
     /// RFC3339 timestamp of the next scheduled run.
     #[serde(default)]
     pub next_run_at: Option<String>,
-    /// Whether TickClaw believes this task is currently running.
+    /// Whether TinyButler believes this task is currently running.
     #[serde(default)]
     pub running: bool,
     /// Count of all execution attempts recorded in state.

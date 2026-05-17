@@ -20,7 +20,7 @@ use tokio::fs as tokio_fs;
 
 use crate::config::{CodeAgentConfig, Config};
 
-/// A resumable interactive code-agent session known to TickClaw.
+/// A resumable interactive code-agent session known to TinyButler.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatSession {
     /// Configured runner key under `code_agents`.
@@ -29,7 +29,7 @@ pub struct ChatSession {
     pub session_id: String,
     /// Optional human-readable title or latest user prompt summary.
     pub title: Option<String>,
-    /// Last time TickClaw observed activity in this session.
+    /// Last time TinyButler observed activity in this session.
     pub last_activity_at: DateTime<Local>,
 }
 
@@ -46,7 +46,7 @@ pub enum ChatStateValue {
     Aborting,
 }
 
-/// Runtime-owned chat bridge state stored under `~/.tickclaw/chat_state.json`.
+/// Runtime-owned chat bridge state stored under `~/.tinybutler/chat_state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ChatRuntimeState {
@@ -56,11 +56,11 @@ pub struct ChatRuntimeState {
     pub active_runner: Option<String>,
     /// Stable adapter session/thread id for the active session, when any.
     pub active_session_id: Option<String>,
-    /// Resumable sessions known to TickClaw.
+    /// Resumable sessions known to TinyButler.
     pub sessions: Vec<ChatSession>,
     /// Current Telegram or local turn id, when a turn is busy.
     pub current_request_id: Option<String>,
-    /// PID of the TickClaw process that started the busy turn.
+    /// PID of the TinyButler process that started the busy turn.
     pub current_process_id: Option<u32>,
     /// Busy-state timestamp, used for stale recovery.
     pub busy_since: Option<DateTime<Local>>,
@@ -561,7 +561,7 @@ impl ChatAgent for CodexChatAgent {
     }
 }
 
-/// Build a Codex app-server builder from a TickClaw `stream_args` runner entry.
+/// Build a Codex app-server builder from a TinyButler `stream_args` runner entry.
 pub fn codex_builder_from_config(
     agent: &CodeAgentConfig,
     working_directory: Option<PathBuf>,
@@ -664,7 +664,7 @@ mod tests {
     #[test]
     fn filters_codex_streaming_runners_to_app_server() {
         let mut config = Config {
-            home: PathBuf::from("/tmp/tickclaw-chat-test"),
+            home: PathBuf::from("/tmp/tinybutler-chat-test"),
             telegram: Default::default(),
             code_agents: Default::default(),
         };

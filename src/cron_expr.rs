@@ -1,6 +1,6 @@
 //! Cron expression normalization, parsing, display, and next-run calculation.
 //!
-//! TickClaw uses `croner` as the single source of truth so scheduling and
+//! TinyButler uses `croner` as the single source of truth so scheduling and
 //! human-readable descriptions cannot disagree.
 
 use std::str::FromStr;
@@ -19,7 +19,7 @@ pub fn normalize_cron(expr: &str) -> String {
     }
 }
 
-/// Parse a cron expression after applying TickClaw's normalization rule.
+/// Parse a cron expression after applying TinyButler's normalization rule.
 pub fn parse_cron(expr: &str) -> Result<Cron> {
     let normalized = normalize_cron(expr);
     Cron::from_str(&normalized).with_context(|| format!("invalid cron expression: {expr}"))

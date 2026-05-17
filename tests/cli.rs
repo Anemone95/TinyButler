@@ -1,4 +1,4 @@
-//! End-to-end CLI tests for the public TickClaw command surface.
+//! End-to-end CLI tests for the public TinyButler command surface.
 //!
 //! These tests exercise the installed binary through Cargo's test-provided
 //! executable path so command parsing, init templates, check, and task commands
@@ -10,19 +10,19 @@ use std::process::{Command, Output};
 use chrono::{Duration, Local};
 use serde_json::json;
 
-/// Return the compiled TickClaw binary path provided by Cargo integration tests.
-fn tickclaw_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_tickclaw"))
+/// Return the compiled TinyButler binary path provided by Cargo integration tests.
+fn tinybutler_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_tinybutler"))
 }
 
-/// Execute TickClaw against an isolated home directory.
-fn run_tickclaw(home: &Path, args: &[&str]) -> Output {
-    Command::new(tickclaw_bin())
+/// Execute TinyButler against an isolated home directory.
+fn run_tinybutler(home: &Path, args: &[&str]) -> Output {
+    Command::new(tinybutler_bin())
         .arg("--home")
         .arg(home)
         .args(args)
         .output()
-        .expect("tickclaw command should start")
+        .expect("tinybutler command should start")
 }
 
 /// Convert command stdout into UTF-8 for readable assertions.
@@ -66,10 +66,10 @@ fn init_then_check_creates_valid_home() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let check = run_tickclaw(home, &["check"]);
+    let check = run_tinybutler(home, &["check"]);
     assert!(check.status.success(), "{}", stderr(&check));
     assert!(stdout(&check).contains("ok: checked config.yaml and 2 task definition"));
 
@@ -96,7 +96,7 @@ fn init_codex_runners_read_prompt_from_stdin_and_emit_json() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
     let config_text = std::fs::read_to_string(home.join("config.yaml")).expect("config");
@@ -137,7 +137,7 @@ fn init_stream_runners_include_complete_streaming_flags() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
     let config_text = std::fs::read_to_string(home.join("config.yaml")).expect("config");
@@ -189,7 +189,7 @@ fn check_rejects_removed_task_fields() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
     let task_yaml = home.join("tasks/regular-check/task.yaml");
@@ -197,7 +197,7 @@ fn check_rejects_removed_task_fields() {
     text.push_str("workspace: /tmp\n");
     std::fs::write(&task_yaml, text).expect("write invalid task yaml");
 
-    let check = run_tickclaw(home, &["check"]);
+    let check = run_tinybutler(home, &["check"]);
     assert!(
         !check.status.success(),
         "check should fail on obsolete field"
@@ -214,11 +214,11 @@ fn check_rejects_missing_task_execution_files_and_runners() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
     std::fs::remove_file(home.join("tasks/regular-check/run.sh")).expect("remove run.sh");
-    let missing_script = run_tickclaw(home, &["check"]);
+    let missing_script = run_tinybutler(home, &["check"]);
     assert!(
         !missing_script.status.success(),
         "check should reject command tasks without run.sh"
@@ -229,7 +229,7 @@ fn check_rejects_missing_task_execution_files_and_runners() {
         stderr(&missing_script)
     );
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
     let task_yaml = home.join("tasks/smoke-task/task.yaml");
     let text = std::fs::read_to_string(&task_yaml)
@@ -237,7 +237,7 @@ fn check_rejects_missing_task_execution_files_and_runners() {
         .replace("runner: gpt-5.3-codex-spark", "runner: missing-runner");
     std::fs::write(&task_yaml, text).expect("write task yaml");
 
-    let missing_runner = run_tickclaw(home, &["check"]);
+    let missing_runner = run_tinybutler(home, &["check"]);
     assert!(
         !missing_runner.status.success(),
         "check should reject agent tasks with unknown runners"
@@ -254,13 +254,13 @@ fn task_run_and_status_record_latest_log() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let run = run_tickclaw(home, &["task", "run", "regular-check"]);
+    let run = run_tinybutler(home, &["task", "run", "regular-check"]);
     assert!(run.status.success(), "{}", stderr(&run));
 
-    let status = run_tickclaw(home, &["task", "status", "regular-check"]);
+    let status = run_tinybutler(home, &["task", "status", "regular-check"]);
     assert!(status.status.success(), "{}", stderr(&status));
     let out = stdout(&status);
     assert!(out.contains("last_status"));
@@ -274,10 +274,10 @@ fn agent_status_shows_prompt_content() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let status = run_tickclaw(home, &["task", "status", "smoke-task"]);
+    let status = run_tinybutler(home, &["task", "status", "smoke-task"]);
     assert!(status.status.success(), "{}", stderr(&status));
     let out = stdout(&status);
 
@@ -292,10 +292,10 @@ fn task_list_uses_chat_readable_multiline_blocks() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let list = run_tickclaw(home, &["task", "list"]);
+    let list = run_tinybutler(home, &["task", "list"]);
     assert!(list.status.success(), "{}", stderr(&list));
     let out = stdout(&list);
 
@@ -314,10 +314,10 @@ fn task_enable_and_disable_update_task_yaml() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
-    let disable = run_tickclaw(home, &["task", "disable", "regular-check"]);
+    let disable = run_tinybutler(home, &["task", "disable", "regular-check"]);
     assert!(disable.status.success(), "{}", stderr(&disable));
     assert!(stdout(&disable).contains("regular-check disabled"));
 
@@ -325,11 +325,11 @@ fn task_enable_and_disable_update_task_yaml() {
         std::fs::read_to_string(home.join("tasks/regular-check/task.yaml")).expect("task yaml");
     assert!(disabled_yaml.contains("enabled: false"));
 
-    let list = run_tickclaw(home, &["task", "list"]);
+    let list = run_tinybutler(home, &["task", "list"]);
     assert!(list.status.success(), "{}", stderr(&list));
     assert!(stdout(&list).contains("regular-check\n  enabled: false"));
 
-    let enable = run_tickclaw(home, &["task", "enable", "regular-check"]);
+    let enable = run_tinybutler(home, &["task", "enable", "regular-check"]);
     assert!(enable.status.success(), "{}", stderr(&enable));
     assert!(stdout(&enable).contains("regular-check enabled"));
 
@@ -343,7 +343,7 @@ fn manual_task_run_preserves_future_scheduled_next_run() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
     let state_path = home.join("tasks/regular-check/state.json");
@@ -361,7 +361,7 @@ fn manual_task_run_preserves_future_scheduled_next_run() {
     )
     .expect("write state");
 
-    let run = run_tickclaw(home, &["task", "run", "regular-check"]);
+    let run = run_tinybutler(home, &["task", "run", "regular-check"]);
     assert!(run.status.success(), "{}", stderr(&run));
 
     let state: serde_json::Value =
@@ -377,7 +377,7 @@ fn task_list_reconciles_state_when_schedule_changes() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let init = run_tickclaw(home, &["init"]);
+    let init = run_tinybutler(home, &["init"]);
     assert!(init.status.success(), "{}", stderr(&init));
 
     let state_path = home.join("tasks/regular-check/state.json");
@@ -395,7 +395,7 @@ fn task_list_reconciles_state_when_schedule_changes() {
     )
     .expect("write state");
 
-    let list = run_tickclaw(home, &["task", "list"]);
+    let list = run_tinybutler(home, &["task", "list"]);
     assert!(list.status.success(), "{}", stderr(&list));
 
     let state: serde_json::Value =
@@ -411,7 +411,7 @@ fn old_top_level_commands_are_not_public_cli() {
     let home = temp.path();
 
     for command in ["scan", "run", "state", "logs"] {
-        let output = run_tickclaw(home, &[command]);
+        let output = run_tinybutler(home, &[command]);
         assert!(
             !output.status.success(),
             "old command should not be accepted: {command}"
@@ -424,7 +424,7 @@ fn telegram_poll_is_not_a_public_cli_command() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let output = run_tickclaw(home, &["telegram", "--poll"]);
+    let output = run_tinybutler(home, &["telegram", "--poll"]);
     assert!(
         !output.status.success(),
         "telegram polling should start from daemon, not --poll"
@@ -436,7 +436,7 @@ fn chat_commands_are_public_cli_surface() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    let output = run_tickclaw(home, &["chat", "--help"]);
+    let output = run_tinybutler(home, &["chat", "--help"]);
     assert!(output.status.success(), "{}", stderr(&output));
     let out = stdout(&output);
     assert!(out.contains("new"));

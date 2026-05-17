@@ -1424,7 +1424,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tickclaw"
+name = "tinybutler"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -26,10 +26,10 @@ use crate::chat::{
 use crate::config::Config;
 use crate::scheduler::Scheduler;
 
-/// Telegram parse mode used by TickClaw-generated and CLI-authored messages.
+/// Telegram parse mode used by TinyButler-generated and CLI-authored messages.
 pub const TELEGRAM_PARSE_MODE: &str = "MarkdownV2";
 
-/// Parsed Telegram command supported by TickClaw ingress.
+/// Parsed Telegram command supported by TinyButler ingress.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IngressCommand {
     Help,
@@ -74,7 +74,7 @@ pub async fn notify_run(
     summary: &str,
 ) -> Result<()> {
     let mut text = format!(
-        "*TickClaw task:* {}\n*status:* {}\n*duration:* {}\n*log:* {}",
+        "*TinyButler task:* {}\n*status:* {}\n*duration:* {}\n*log:* {}",
         inline_code(task_name),
         inline_code(status),
         inline_code(&format!("{duration_seconds}s")),
@@ -124,7 +124,7 @@ pub async fn poll(config: Config) -> Result<()> {
                                         let _ = send_markdown_text_to_chat(
                                             &config,
                                             &message.chat.id.to_string(),
-                                            &format!("TickClaw command failed:\n{}", code_block(&truncate(&format!("{err:#}"), 1200))),
+                                            &format!("TinyButler command failed:\n{}", code_block(&truncate(&format!("{err:#}"), 1200))),
                                         ).await;
                                     }
                                     update_handled = true;
@@ -138,7 +138,7 @@ pub async fn poll(config: Config) -> Result<()> {
                                 } else {
                                     if let Err(err) = handle_callback(&config, &callback).await {
                                         warn!("failed to handle Telegram callback: {err:#}");
-                                        let _ = answer_callback_query(&config, &callback.id, Some("TickClaw callback failed")).await;
+                                        let _ = answer_callback_query(&config, &callback.id, Some("TinyButler callback failed")).await;
                                     }
                                     update_handled = true;
                                 }
@@ -161,7 +161,7 @@ pub async fn poll(config: Config) -> Result<()> {
     }
 }
 
-/// Parse Telegram text into a TickClaw ingress command.
+/// Parse Telegram text into a TinyButler ingress command.
 pub fn parse_ingress_command(text: &str) -> IngressCommand {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -292,7 +292,7 @@ async fn handle_command(
                 help_text()
             } else {
                 format!(
-                    "Unknown TickClaw command: {}\n\n{}",
+                    "Unknown TinyButler command: {}\n\n{}",
                     inline_code(&text),
                     help_text()
                 )
@@ -304,7 +304,7 @@ async fn handle_command(
 
 fn help_text() -> String {
     [
-        escape_markdown_v2("TickClaw commands:"),
+        escape_markdown_v2("TinyButler commands:"),
         format!(
             "{}: {}",
             inline_code("/new"),
@@ -502,7 +502,7 @@ async fn handle_callback(config: &Config, callback: &TelegramCallbackQuery) -> R
     if let Some(session_id) = data.strip_prefix("tc_session:") {
         return handle_session_callback(config, &chat_id, session_id).await;
     }
-    send_markdown_text_to_chat(config, &chat_id, "Stale TickClaw selection").await
+    send_markdown_text_to_chat(config, &chat_id, "Stale TinyButler selection").await
 }
 
 async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Result<()> {
