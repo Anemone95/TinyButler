@@ -17,7 +17,7 @@ TinyButler stores local configuration and runtime files under `~/.tinybutler/` b
   .gitignore            # ignore template for logs and TinyButler-owned runtime files
 ```
 
-`tasks/*` is owned by [tasks.md](tasks.md). `telegram_state.json` is owned by [telegram-ingress.md](telegram-ingress.md). `chat_state.json` and `chat.lock` are owned by [chatbridge.md](chatbridge.md). `.gitignore` is a configuration-owned ignore template for files that should not be managed by git.
+`tasks/*` is owned by [tasks.md](tasks.md). `telegram_state.json` is owned by [telegram-ingress.md](telegram-ingress.md). `chat_state.json` and `chat.lock` are owned by [chatbridge.md](chatbridge.md). `.gitignore` is copied from `templates/.gitignore` and is a configuration-owned ignore template for files that should not be managed by git.
 
 ## Config File
 

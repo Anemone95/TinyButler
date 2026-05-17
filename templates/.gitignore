@@ -1,0 +1,16 @@
+# Local machine config may contain Telegram tokens and runner credentials.
+/config.yaml
+
+# TinyButler-owned runtime state.
+/tinybutler.log
+/telegram_state.json
+/chat_state.json
+/chat.lock
+
+# Per-task runtime output.
+/tasks/*/state.json
+/tasks/*/logs/
+/tasks/*/.tinybutler.lock
+
+# Task execution data is local output by default.
+/tasks/*/data/

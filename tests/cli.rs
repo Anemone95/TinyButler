@@ -118,6 +118,13 @@ fn init_then_check_creates_valid_home() {
     assert!(check.status.success(), "{}", stderr(&check));
     assert!(stdout(&check).contains("ok: checked config.yaml and 2 task definition"));
 
+    let gitignore = home.join(".gitignore");
+    assert!(gitignore.exists(), "init should install home .gitignore");
+    let gitignore_text = std::fs::read_to_string(&gitignore).expect("home .gitignore");
+    assert!(gitignore_text.contains("/config.yaml"));
+    assert!(gitignore_text.contains("/tasks/*/logs/"));
+    assert!(gitignore_text.contains("/tasks/*/state.json"));
+
     assert!(home.join("tasks/smoke-task/task.yaml").exists());
     assert!(home.join("tasks/regular-check/run.sh").exists());
 

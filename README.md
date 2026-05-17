@@ -14,21 +14,13 @@ Build from source:
 make
 ```
 
-Initialize a TinyButler home:
-
-```bash
-target/debug/tinybutler init
-```
-
-This creates `~/.tinybutler/config.yaml` and example tasks under `~/.tinybutler/tasks/`.
-
 Install the release binary and enable the user-level systemd daemon:
 
 ```bash
 make install
 ```
 
-`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs the release binary to `~/.cargo/bin/tinybutler`. It also installs the TinyButler operation skill under `${CODEX_HOME:-$HOME/.codex}/skills/`, writes `~/.config/systemd/user/tinybutler.service`, runs `systemctl --user enable --now tinybutler.service`, and tries to enable lingering so the service can start at boot. Pass extra Cargo install options through `CARGO_INSTALL_ARGS`:
+`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs the release binary to `~/.cargo/bin/tinybutler`. It also initializes `~/.tinybutler` with `config.yaml`, `.gitignore`, and example tasks when that directory does not already exist. It installs the TinyButler operation skill under `${CODEX_HOME:-$HOME/.codex}/skills/`, writes `~/.config/systemd/user/tinybutler.service`, runs `systemctl --user enable --now tinybutler.service`, and tries to enable lingering so the service can start at boot. Pass extra Cargo install options through `CARGO_INSTALL_ARGS`:
 
 ```bash
 make install CARGO_INSTALL_ARGS='--root ~/.local --force'

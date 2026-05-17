@@ -50,6 +50,11 @@ install: install-skills
 		shift || true; \
 	done; \
 	bin="$${install_root%/}/bin/tinybutler"; \
+	if [ ! -d "$(HOME)/.tinybutler" ]; then \
+		"$$bin" init; \
+	else \
+		printf '%s\n' "TinyButler home already exists at $(HOME)/.tinybutler; skipping init"; \
+	fi; \
 	printf '%s\n' \
 		'[Unit]' \
 		'Description=TinyButler scheduler daemon' \

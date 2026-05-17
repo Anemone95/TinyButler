@@ -121,7 +121,7 @@ Write clear comments for human code review. Each source file should start with a
 
 - `make`: build the debug binary with `cargo build`.
 - `make verify`: run `cargo fmt`, `cargo check`, `cargo test`, and `cargo clippy -- -D warnings`.
-- `make install`: install the release binary, install or refresh project skills under `${CODEX_HOME:-$HOME/.codex}/skills/`, write and start the user service, and try to enable linger for boot startup.
+- `make install`: install the release binary, initialize `~/.tinybutler` when it does not already exist, install or refresh project skills under `${CODEX_HOME:-$HOME/.codex}/skills/`, write and start the user service, and try to enable linger for boot startup.
 - `make uninstall`: stop and disable the user service, remove the service file, remove the installed binary, and remove the installed TinyButler project skill directory.
 - `make service-status`: show the user service status.
 - `make sync`: commit and push `AGENTS.md` and `docs/*.md` after recording agreed decisions, requirements, and implementation rules in `AGENTS.md` or the relevant authoritative design note. Keep `README.md` and `skills/` aligned when those docs change user or installed-agent guidance, and never commit real Telegram tokens or chat ids.
