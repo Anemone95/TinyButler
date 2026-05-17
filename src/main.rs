@@ -66,12 +66,27 @@ enum Command {
     },
     /// Open the task selector.
     Tasks,
+    /// Script-friendly task inspection commands.
+    Task {
+        /// Task command to execute.
+        #[command(subcommand)]
+        command: TaskCommand,
+    },
     /// Interactive code-agent chat commands.
     Chat {
         /// Chat command to execute.
         #[command(subcommand)]
         command: ChatCommand,
     },
+}
+
+/// Public read-only `tinybutler task ...` command surface.
+#[derive(Debug, Subcommand)]
+enum TaskCommand {
+    /// List all tasks and their latest state summary.
+    List,
+    /// Show task details, state, and latest log preview.
+    Status { task: String },
 }
 
 /// Public `tinybutler chat ...` command surface.
@@ -127,6 +142,13 @@ async fn main() -> Result<()> {
         Command::Tasks => {
             let scheduler = Scheduler::new(config);
             run_task_selector(&scheduler).await
+        }
+        Command::Task { command } => {
+            let scheduler = Scheduler::new(config);
+            match command {
+                TaskCommand::List => scheduler.task_list().await,
+                TaskCommand::Status { task } => scheduler.task_status(&task).await,
+            }
         }
         Command::Chat { command } => match command {
             ChatCommand::New { runner } => chat_new(config, runner).await,

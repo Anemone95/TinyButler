@@ -42,6 +42,8 @@ tinybutler telegram '<message>'                # send a Telegram Markdown-author
 tinybutler telegram --attachment <path>        # send a Telegram attachment with an optional caption
 
 tinybutler tasks                               # open the task selector
+tinybutler task list                           # print task summaries for scripts and agents
+tinybutler task status <task>                  # print task details, state, and latest log preview
 
 tinybutler chat new                            # start a local interactive code-agent chat session
 tinybutler chat session                        # list and resume a local interactive chat session
@@ -104,6 +106,8 @@ rm -rf /home/wenyuan/TinyButler/.tinybutler-test
 cargo run -- --home /home/wenyuan/TinyButler/.tinybutler-test init
 target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test check
 target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test tasks
+target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test task list
+target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test task status smoke-task
 rm -rf /home/wenyuan/TinyButler/.tinybutler-test
 ```
 

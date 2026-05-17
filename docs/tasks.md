@@ -81,11 +81,13 @@ Agent runner configuration, session placeholders, and sandbox/model flags are ow
 
 ## Task Commands
 
-Task behavior starts from local CLI commands. TinyButler provides a task selector for interactive task management; CLI agents can inspect task details directly from the task directory.
+Task behavior starts from local CLI commands. TinyButler provides a task selector for interactive task management, plus read-only task inspection commands for scripts and code agents.
 
 | Local CLI | Telegram | Meaning |
 | --- | --- | --- |
 | `tinybutler tasks` | `/tasks` | Open the task selector |
+| `tinybutler task list` | none | Print task summaries |
+| `tinybutler task status <task>` | none | Print task details, `state.json`, and the latest-log preview |
 
 `tinybutler tasks` lists task names and lets the user choose one with the keyboard. The local selector should support up/down navigation and an explicit exit option.
 
@@ -101,7 +103,7 @@ The selected-task view then offers these actions:
 - `disable`: show only when the task is enabled; set `enabled: false`.
 - `exit`: leave the task selector.
 
-In CLI or agent environments, task details can also be inspected directly from `~/.tinybutler/tasks/<task-name>/`.
+In CLI or agent environments, use `tinybutler task list` for a stable task summary and `tinybutler task status <task>` for task detail, current state, and latest-log preview. Task-owned files can also be inspected directly from `~/.tinybutler/tasks/<task-name>/` when lower-level file access is useful.
 
 ## Scheduler Loop
 
@@ -111,7 +113,7 @@ Each scheduler tick re-scans `tasks/*/task.yaml` before due checks. The default 
 
 Adding, removing, or editing task directories while the daemon is running is picked up on the next tick.
 
-CLI commands such as `tinybutler check` and `tinybutler tasks` read the relevant files directly when invoked.
+CLI commands such as `tinybutler check`, `tinybutler tasks`, `tinybutler task list`, and `tinybutler task status <task>` read the relevant files directly when invoked.
 
 On each scheduler tick, the daemon validates task schema, decides whether a task is due, locks the task directory, runs `agent.md` or `run.sh`, writes stdout and stderr to `logs/`, updates `state.json`, and sends Telegram notification when notification rules require it.
 

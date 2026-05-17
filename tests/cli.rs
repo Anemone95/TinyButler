@@ -379,6 +379,26 @@ fn task_list_uses_chat_readable_multiline_blocks() {
 }
 
 #[test]
+fn task_list_and_status_are_script_friendly_read_only_commands() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let list = run_tinybutler(home, &["task", "list"]);
+    assert!(list.status.success(), "{}", stderr(&list));
+    assert!(stdout(&list).contains("regular-check\n  enabled: true"));
+
+    let status = run_tinybutler(home, &["task", "status", "smoke-task"]);
+    assert!(status.status.success(), "{}", stderr(&status));
+    let out = stdout(&status);
+    assert!(out.contains("**Task:** `smoke-task`"));
+    assert!(out.contains("**agent.md:**"));
+    assert!(out.contains("**state.json:**"));
+}
+
+#[test]
 fn scripted_task_selector_rejects_zero_index() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
@@ -496,11 +516,23 @@ fn old_top_level_commands_are_not_public_cli() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
-    for command in ["scan", "run", "state", "logs", "task"] {
+    for command in ["scan", "run", "state", "logs"] {
         let output = run_tinybutler(home, &[command]);
         assert!(
             !output.status.success(),
             "old command should not be accepted: {command}"
+        );
+    }
+
+    for args in [
+        ["task", "run", "regular-check"],
+        ["task", "enable", "regular-check"],
+        ["task", "disable", "regular-check"],
+    ] {
+        let output = run_tinybutler(home, &args);
+        assert!(
+            !output.status.success(),
+            "mutating task command should not be accepted: {args:?}"
         );
     }
 }

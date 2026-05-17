@@ -99,11 +99,13 @@ tinybutler check
 tinybutler telegram '<message>'
 tinybutler telegram --attachment <path> --caption '<message>'
 tinybutler tasks
+tinybutler task list
+tinybutler task status <task>
 tinybutler chat new
 tinybutler chat session
 ```
 
-`tinybutler check` validates local config and task definitions. `tinybutler tasks` opens the task selector, where you can inspect task details, run a task once, view state and latest-log previews, and enable or disable the selected task. In non-interactive command contexts it prints the task list and exits.
+`tinybutler check` validates local config and task definitions. `tinybutler tasks` opens the task selector, where you can inspect task details, run a task once, view state and latest-log previews, and enable or disable the selected task. `tinybutler task list` and `tinybutler task status <task>` are read-only, script-friendly inspection commands for agents and shell workflows.
 
 `tinybutler chat new` starts a local REPL for an interactive Codex chat session. `tinybutler chat session` resumes a previous session. Use `/exit` to detach and Ctrl+C to abort an active turn. Local REPL sessions tell the agent to print local artifact paths; Telegram sessions tell the agent it is behind the Telegram bridge and can use Telegram attachment delivery.
 

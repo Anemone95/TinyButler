@@ -251,15 +251,16 @@ impl Scheduler {
 
     /// Build task-status text that can be printed locally or sent to Telegram.
     pub async fn task_status_text(&self, name: &str) -> Result<String> {
+        let mut output = self.task_detail_text(name).await?;
         let task = self.find_task(name).await?;
         let state = TaskState::load(&task.state_path()).await?;
         let state_path = task.state_path();
-        let mut output = format!(
-            "**Task status:** `{}`\n\n**state.json:** `{}`\n{}",
+        output.push_str(&format!(
+            "\n\n**Task status:** `{}`\n\n**state.json:** `{}`\n{}",
             task.name,
             state_path.display(),
             markdown_code_fence("json", &serde_json::to_string_pretty(&state)?),
-        );
+        ));
 
         if let Some(log) = state.last_log.as_deref() {
             let log_path = task.dir.join(log);

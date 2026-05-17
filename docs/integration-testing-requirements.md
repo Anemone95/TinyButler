@@ -28,10 +28,12 @@ rm -rf /home/wenyuan/TinyButler/.tinybutler-test
 cargo run -- --home /home/wenyuan/TinyButler/.tinybutler-test init
 target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test check
 target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test tasks
+target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test task list
+target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-test task status smoke-task
 rm -rf /home/wenyuan/TinyButler/.tinybutler-test
 ```
 
-Expected result: `check` succeeds and `tasks` lists the initialized example tasks. Do not use old low-level `run`, `state`, or `logs` commands for documented behavior checks.
+Expected result: `check` succeeds, `tasks` opens or prints the initialized example tasks depending on terminal context, `task list` prints script-friendly task summaries, and `task status smoke-task` prints task detail plus `state.json`. Do not use old low-level `run`, `state`, or `logs` commands for documented behavior checks.
 
 ## Local Tasks Menu
 
@@ -61,6 +63,8 @@ grep -q 'enabled: true' /home/wenyuan/TinyButler/.tinybutler-menu-test/tasks/reg
 grep -q '"last_status": "success"' /home/wenyuan/TinyButler/.tinybutler-menu-test/tasks/regular-check/state.json
 test -n "$(find /home/wenyuan/TinyButler/.tinybutler-menu-test/tasks/regular-check/logs -name '*.log' -print -quit)"
 target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-menu-test check
+target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-menu-test task list
+target/debug/tinybutler --home /home/wenyuan/TinyButler/.tinybutler-menu-test task status regular-check
 rm -rf /home/wenyuan/TinyButler/.tinybutler-menu-test
 ```
 
@@ -142,6 +146,7 @@ At minimum, cover scheduled agent `args` and `resume_args` with a fake local run
 - Add a `fake-agent` runner under temporary `config.yaml`.
 - Create an agent task with `session: reuse`.
 - Run it once through `tinybutler tasks`; confirm `state.json` stores `session-fresh`.
+- Inspect it with `tinybutler task status <task>`; confirm the output shows task detail, `state.json`, and latest-log preview.
 - Run it again; confirm logs show resume with `session-fresh` and `state.json` stores `session-resumed`.
 
 When real credentials and time allow, test each configured real runner:
@@ -220,4 +225,3 @@ rm -rf /home/wenyuan/TinyButler/.tinybutler-test \
 rm -f /tmp/tinybutler-*.out /tmp/tinybutler-*.err /tmp/tinybutler-*.png /tmp/tinybutler-*.mp3
 systemctl --user is-active tinybutler.service 2>/dev/null || true
 ```
-

@@ -46,13 +46,18 @@ the Telegram long-polling command loop.
 
 ```bash
 tinybutler tasks
+tinybutler task list
+tinybutler task status <task>
 ```
 
 Open the task selector. In an interactive terminal, choose a task with the
 keyboard, inspect its `task.yaml` plus `agent.md` or `run.sh`, then choose
-`status`, `run`, `enable`, `disable`, or `exit`. In a non-interactive command
-context, `tinybutler tasks` prints all tasks with enabled state, type, runner,
-schedule description, latest state, next run time, and counters, then exits.
+`status`, `run`, `enable`, `disable`, or `exit`.
+
+Use `tinybutler task list` in scripts and agent workflows to print all tasks
+with enabled state, type, runner, schedule description, latest state, next run
+time, and counters. Use `tinybutler task status <task>` to print task details,
+`state.json`, and the latest-log preview.
 
 ```bash
 tinybutler chat new
@@ -356,7 +361,7 @@ When creating or changing a task:
 4. Inspect the task:
 
    ```bash
-   tinybutler tasks
+   tinybutler task status <task-name>
    ```
 
 5. Run the task manually when safe:
@@ -368,7 +373,7 @@ When creating or changing a task:
 6. Check the task list:
 
    ```bash
-   tinybutler tasks
+   tinybutler task list
    ```
 
 7. Send the result or attach a log if useful:
