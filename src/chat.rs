@@ -457,6 +457,54 @@ impl CodexChatAgent {
     pub fn active_session(&self) -> Option<ChatSession> {
         self.active_session.clone()
     }
+
+    /// Resume a session for an ordinary turn without re-injecting transport instructions.
+    pub async fn resume_session_for_turn(&mut self, session_id: &str) -> Result<ChatSession> {
+        self.resume_session_inner(session_id, None).await
+    }
+
+    async fn resume_session_inner(
+        &mut self,
+        session_id: &str,
+        developer_instructions: Option<String>,
+    ) -> Result<ChatSession> {
+        let mut session = self
+            .known_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .cloned()
+            .unwrap_or_else(|| ChatSession {
+                runner: self.runner.clone(),
+                session_id: session_id.to_string(),
+                title: None,
+                last_activity_at: Local::now(),
+            });
+        let response: codex_codes::protocol_generated::types::ThreadResumeResponse = self
+            .client
+            .request(
+                methods::THREAD_RESUME,
+                &ThreadResumeParams {
+                    approval_policy: None,
+                    approvals_reviewer: None,
+                    base_instructions: None,
+                    config: None,
+                    cwd: None,
+                    developer_instructions,
+                    model: None,
+                    model_provider: None,
+                    personality: None,
+                    sandbox: None,
+                    service_tier: None,
+                    thread_id: session_id.to_string(),
+                },
+            )
+            .await
+            .with_context(|| format!("failed to resume Codex chat session {session_id}"))?;
+        session.session_id = response.thread.id.clone();
+        session.last_activity_at = Local::now();
+        self.active_session = Some(session.clone());
+        Ok(self.record_session(session))
+    }
 }
 
 #[async_trait]
@@ -484,44 +532,11 @@ impl ChatAgent for CodexChatAgent {
     }
 
     async fn resume_session(&mut self, session_id: &str) -> Result<ChatSession> {
-        let mut session = self
-            .known_sessions
-            .iter()
-            .find(|session| session.session_id == session_id)
-            .cloned()
-            .unwrap_or_else(|| ChatSession {
-                runner: self.runner.clone(),
-                session_id: session_id.to_string(),
-                title: None,
-                last_activity_at: Local::now(),
-            });
-        let response: codex_codes::protocol_generated::types::ThreadResumeResponse = self
-            .client
-            .request(
-                methods::THREAD_RESUME,
-                &ThreadResumeParams {
-                    approval_policy: None,
-                    approvals_reviewer: None,
-                    base_instructions: None,
-                    config: None,
-                    cwd: None,
-                    developer_instructions: Some(chat_bridge_instructions(
-                        self.instruction_context,
-                    )),
-                    model: None,
-                    model_provider: None,
-                    personality: None,
-                    sandbox: None,
-                    service_tier: None,
-                    thread_id: session_id.to_string(),
-                },
-            )
-            .await
-            .with_context(|| format!("failed to resume Codex chat session {session_id}"))?;
-        session.session_id = response.thread.id.clone();
-        session.last_activity_at = Local::now();
-        self.active_session = Some(session.clone());
-        Ok(self.record_session(session))
+        self.resume_session_inner(
+            session_id,
+            Some(chat_bridge_instructions(self.instruction_context)),
+        )
+        .await
     }
 
     async fn send_turn(&mut self, message: &str) -> Result<()> {

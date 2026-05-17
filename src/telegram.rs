@@ -634,7 +634,7 @@ async fn run_telegram_chat_turn(
         ChatInstructionContext::Telegram,
     )
     .await?;
-    if let Err(err) = agent.resume_session(&session_id).await {
+    if let Err(err) = agent.resume_session_for_turn(&session_id).await {
         if codex_resume_missing_rollout(&err) {
             agent.start_session().await?;
         } else {
