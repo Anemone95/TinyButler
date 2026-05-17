@@ -103,6 +103,9 @@ pub async fn poll(config: Config) -> Result<()> {
     let abort_sender: SharedAbort = Arc::new(Mutex::new(None));
 
     info!("starting Telegram polling for configured chat");
+    if let Err(err) = sync_bot_menu(&client, &config, &allowed_chat_id).await {
+        warn!("failed to sync Telegram bot menu: {err:#}");
+    }
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -781,6 +784,71 @@ async fn poll_once(
     Ok(parsed.result)
 }
 
+async fn sync_bot_menu(client: &Client, config: &Config, chat_id: &str) -> Result<()> {
+    set_bot_commands(client, config, None).await?;
+    set_bot_commands(
+        client,
+        config,
+        Some(json!({ "type": "chat", "chat_id": chat_id })),
+    )
+    .await
+}
+
+async fn set_bot_commands(
+    client: &Client,
+    config: &Config,
+    scope: Option<serde_json::Value>,
+) -> Result<()> {
+    let url = telegram_method_url(config, "setMyCommands")?;
+    let mut payload = json!({
+        "commands": bot_menu_commands(),
+    });
+    if let Some(scope) = scope {
+        payload["scope"] = scope;
+    }
+    let response = client
+        .post(url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|err| {
+            anyhow!(
+                "Telegram setMyCommands request failed: {}",
+                err.without_url()
+            )
+        })?;
+    ensure_success(response, "setMyCommands").await
+}
+
+fn bot_menu_commands() -> Vec<TelegramBotCommand> {
+    vec![
+        TelegramBotCommand::new("new", "Start a TinyButler code-agent chat"),
+        TelegramBotCommand::new("session", "Resume a TinyButler chat session"),
+        TelegramBotCommand::new("abort", "Abort the active code-agent turn"),
+        TelegramBotCommand::new("task_list", "List TinyButler tasks"),
+        TelegramBotCommand::new("task_status", "Show TinyButler task status"),
+        TelegramBotCommand::new("task_run", "Run one TinyButler task now"),
+        TelegramBotCommand::new("task_enable", "Enable one TinyButler task"),
+        TelegramBotCommand::new("task_disable", "Disable one TinyButler task"),
+        TelegramBotCommand::new("help", "Show TinyButler help"),
+    ]
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct TelegramBotCommand {
+    command: String,
+    description: String,
+}
+
+impl TelegramBotCommand {
+    fn new(command: &str, description: &str) -> Self {
+        Self {
+            command: command.to_string(),
+            description: description.to_string(),
+        }
+    }
+}
+
 async fn send_media(
     config: &Config,
     method: &str,
@@ -1296,6 +1364,39 @@ mod tests {
 
         assert!(text.contains("code\\-agent"));
         assert!(!text.contains("code-agent"));
+    }
+
+    #[test]
+    fn bot_menu_commands_match_current_public_telegram_surface() {
+        let commands = bot_menu_commands();
+        let command_names = commands
+            .iter()
+            .map(|command| command.command.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            command_names,
+            vec![
+                "new",
+                "session",
+                "abort",
+                "task_list",
+                "task_status",
+                "task_run",
+                "task_enable",
+                "task_disable",
+                "help",
+            ]
+        );
+        for command in commands {
+            assert!(command
+                .command
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_'));
+            assert!(!command.description.contains("TickClaw"));
+            assert!(!command.description.contains("tickclaw"));
+            assert!(command.description.contains("TinyButler") || command.command == "abort");
+        }
     }
 
     #[test]

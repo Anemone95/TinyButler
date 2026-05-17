@@ -122,6 +122,8 @@ telegram:
 
 TinyButler uses Telegram Bot HTTP API calls. `tinybutler telegram '<message>'`, media captions, and compact daemon-generated summaries use MarkdownV2. TinyButler sanitizes CLI-authored Telegram messages before sending; still escape dynamic content deliberately when composing MarkdownV2. Send arbitrary logs and large text as documents. Agent tasks may call `tinybutler telegram ...` themselves when they want to notify. The daemon sends fallback notifications for failures, and shell tasks notify when stdout is non-empty or when the task fails. The daemon stores Telegram long-polling offset state in `~/.tinybutler/telegram_state.json`.
 
+When `tinybutler daemon` starts with Telegram configured, it refreshes the bot slash-command menu for the configured chat so clients show the current TinyButler command names and descriptions.
+
 When the daemon is running, Telegram also supports `/new`, `/session`, and `/abort` for the interactive code-agent chat bridge. `/new` opens a model menu, `/session` opens a resumable-session menu, and bare Telegram text is redirected to the active chat session after selection.
 
 ## Development

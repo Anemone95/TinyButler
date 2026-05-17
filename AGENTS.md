@@ -227,6 +227,7 @@ Do not add Telegram-only behavior. If a Telegram feature cannot be explained as 
 
 Telegram bot menu commands must use lowercase letters, digits, and underscores only. Use underscore command names such as `/task_list`; do not use hyphenated command names such as `/task-list`.
 `tinybutler daemon` starts the MVP Telegram long-polling ingress loop automatically when `telegram.bot_token` and `telegram.chat_id` are configured. There is no separate `tinybutler telegram --poll` public command. The robot handles `/help`, `/task_list`, `/task_status <task>`, `/task_run <task>`, `/task_enable <task>`, and `/task_disable <task>` for the configured `telegram.chat_id` only. It must not respond to bare text aliases such as `tasklist`; users should use slash commands.
+On each daemon startup, TinyButler must refresh the Telegram bot menu with the current slash-command surface by calling `setMyCommands` for both the default bot-command scope and the configured chat scope. This keeps Telegram clients from showing stale command descriptions after project renames or command additions.
 
 ## Telegram Task Management Design
 
