@@ -337,6 +337,15 @@ pub struct AbortOutcome {
     pub resumable: bool,
 }
 
+/// User-facing transport context used to choose adapter instructions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatInstructionContext {
+    /// Local terminal REPL launched by `tinybutler chat`.
+    LocalCli,
+    /// Telegram chat bridge ingress.
+    Telegram,
+}
+
 /// Adapter interface shared by local REPL and Telegram chat bridge code.
 #[async_trait]
 pub trait ChatAgent {
@@ -363,6 +372,7 @@ pub trait ChatAgent {
 pub struct CodexChatAgent {
     runner: String,
     client: AsyncClient,
+    instruction_context: ChatInstructionContext,
     active_session: Option<ChatSession>,
     known_sessions: Vec<ChatSession>,
     current_turn_id: Option<String>,
@@ -376,6 +386,22 @@ impl CodexChatAgent {
         agent: &CodeAgentConfig,
         working_directory: Option<PathBuf>,
     ) -> Result<Self> {
+        Self::connect_with_context(
+            runner,
+            agent,
+            working_directory,
+            ChatInstructionContext::LocalCli,
+        )
+        .await
+    }
+
+    /// Start a Codex app-server with explicit user-facing transport context.
+    pub async fn connect_with_context(
+        runner: impl Into<String>,
+        agent: &CodeAgentConfig,
+        working_directory: Option<PathBuf>,
+        instruction_context: ChatInstructionContext,
+    ) -> Result<Self> {
         let builder = codex_builder_from_config(agent, working_directory)?;
         let client = AsyncClient::start_with(builder)
             .await
@@ -383,6 +409,7 @@ impl CodexChatAgent {
         Ok(Self {
             runner: runner.into(),
             client,
+            instruction_context,
             active_session: None,
             known_sessions: Vec::new(),
             current_turn_id: None,
@@ -438,7 +465,7 @@ impl ChatAgent for CodexChatAgent {
         let thread = self
             .client
             .thread_start(&ThreadStartParams {
-                instructions: Some(chat_bridge_instructions()),
+                instructions: Some(chat_bridge_instructions(self.instruction_context)),
                 tools: None,
             })
             .await
@@ -478,7 +505,9 @@ impl ChatAgent for CodexChatAgent {
                     base_instructions: None,
                     config: None,
                     cwd: None,
-                    developer_instructions: Some(chat_bridge_instructions()),
+                    developer_instructions: Some(chat_bridge_instructions(
+                        self.instruction_context,
+                    )),
                     model: None,
                     model_provider: None,
                     personality: None,
@@ -564,15 +593,35 @@ impl ChatAgent for CodexChatAgent {
     }
 }
 
-fn chat_bridge_instructions() -> String {
-    [
-        "You are connected to the user through TinyButler's Telegram chat bridge.",
+fn chat_bridge_instructions(context: ChatInstructionContext) -> String {
+    let mut instructions = vec![
         "Never expose hidden chain-of-thought, scratchpad text, or reasoning tags such as <think>, <thinking>, <thought>, or <final>. Send only the concise user-visible result.",
-        "When the user asks for an image, screenshot, or generated media, create a local file and make it deliverable. Prefer calling `tinybutler telegram --photo <path> --caption '<short caption>'` when you intentionally want to send it yourself.",
-        "If you cannot or do not call the TinyButler Telegram CLI directly, include `MEDIA:<path>` on its own line in the final answer. TinyButler will upload that file to Telegram and remove the marker from the visible text.",
-        "For a current Linux desktop screenshot, use `/home/wenyuan/linux_dotfiles/skills/screenshot/scripts/take_screenshot.py --mode temp` when it exists, then send the resulting PNG or include it as `MEDIA:<path>`.",
-    ]
-    .join("\n")
+        "For a current Linux desktop screenshot, use `/home/wenyuan/linux_dotfiles/skills/screenshot/scripts/take_screenshot.py --mode temp` when it exists.",
+    ];
+    match context {
+        ChatInstructionContext::LocalCli => {
+            instructions.insert(
+                0,
+                "You are connected to the user through TinyButler's local terminal chat REPL.",
+            );
+            instructions.push(
+                "When you create an image, screenshot, report, or other artifact, print the local file path in the final answer. Do not assume Telegram delivery unless the user explicitly asks you to send through Telegram.",
+            );
+        }
+        ChatInstructionContext::Telegram => {
+            instructions.insert(
+                0,
+                "You are connected to the user through TinyButler's Telegram chat bridge.",
+            );
+            instructions.push(
+                "When the user asks for an image, screenshot, or generated media, create a local file and make it deliverable. Prefer calling `tinybutler telegram --photo <path> --caption '<short caption>'` when you intentionally want to send it yourself.",
+            );
+            instructions.push(
+                "If you cannot or do not call the TinyButler Telegram CLI directly, include `MEDIA:<path>` on its own line in the final answer. TinyButler will upload that file to Telegram and remove the marker from the visible text.",
+            );
+        }
+    }
+    instructions.join("\n")
 }
 
 /// Build a Codex app-server builder from a TinyButler `stream_args` runner entry.
@@ -694,13 +743,25 @@ mod tests {
     }
 
     #[test]
-    fn bridge_instructions_describe_media_delivery() {
-        let instructions = chat_bridge_instructions();
+    fn telegram_bridge_instructions_describe_media_delivery() {
+        let instructions = chat_bridge_instructions(ChatInstructionContext::Telegram);
 
         assert!(instructions.contains("TinyButler"));
+        assert!(instructions.contains("Telegram chat bridge"));
         assert!(instructions.contains("MEDIA:<path>"));
         assert!(instructions.contains("tinybutler telegram --photo"));
         assert!(instructions.contains("take_screenshot.py"));
+    }
+
+    #[test]
+    fn local_bridge_instructions_do_not_claim_telegram_context() {
+        let instructions = chat_bridge_instructions(ChatInstructionContext::LocalCli);
+
+        assert!(instructions.contains("local terminal chat REPL"));
+        assert!(instructions.contains("print the local file path"));
+        assert!(!instructions.contains("Telegram chat bridge"));
+        assert!(!instructions.contains("MEDIA:<path>"));
+        assert!(!instructions.contains("tinybutler telegram --photo"));
     }
 
     #[tokio::test]

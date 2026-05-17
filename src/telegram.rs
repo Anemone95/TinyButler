@@ -21,7 +21,8 @@ use tracing::{info, warn};
 
 use crate::chat::{
     codex_streaming_runner_keys, load_recovered_chat_state, mark_chat_inactive, mark_turn_finished,
-    mark_turn_started, ChatAgent, ChatEvent, ChatLock, ChatSession, ChatStateValue, CodexChatAgent,
+    mark_turn_started, ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatSession,
+    ChatStateValue, CodexChatAgent,
 };
 use crate::config::Config;
 use crate::scheduler::Scheduler;
@@ -528,10 +529,11 @@ async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Re
         return send_markdown_text_to_chat(config, chat_id, "Stale model selection").await;
     }
     let session_result = async {
-        let mut agent = CodexChatAgent::connect(
+        let mut agent = CodexChatAgent::connect_with_context(
             runner.to_string(),
             agent_config,
             Some(std::env::current_dir()?),
+            ChatInstructionContext::Telegram,
         )
         .await?;
         agent.start_session().await
@@ -582,10 +584,11 @@ async fn handle_session_callback(config: &Config, chat_id: &str, session_id: &st
         return send_markdown_text_to_chat(config, chat_id, "Stale session selection").await;
     }
     let session_result = async {
-        let mut agent = CodexChatAgent::connect(
+        let mut agent = CodexChatAgent::connect_with_context(
             session.runner.clone(),
             agent_config,
             Some(std::env::current_dir()?),
+            ChatInstructionContext::Telegram,
         )
         .await?;
         agent.resume_session(session_id).await
@@ -624,10 +627,11 @@ async fn run_telegram_chat_turn(
         .get(&runner)
         .with_context(|| format!("missing code_agents.{runner}"))?;
     let working_directory = std::env::current_dir()?;
-    let mut agent = CodexChatAgent::connect(
+    let mut agent = CodexChatAgent::connect_with_context(
         runner.clone(),
         agent_config,
         Some(working_directory.clone()),
+        ChatInstructionContext::Telegram,
     )
     .await?;
     if let Err(err) = agent.resume_session(&session_id).await {

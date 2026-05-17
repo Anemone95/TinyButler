@@ -79,7 +79,9 @@ tinybutler chat session
 Start a local interactive code-agent chat session or resume a previous one.
 Choose a model/session from the prompt, then type messages. Use `/exit` to
 detach from the REPL without deleting the resumable session. Use Ctrl+C while a
-turn is running to abort that turn.
+turn is running to abort that turn. Local REPL sessions should print local
+artifact paths; Telegram bridge sessions can use TinyButler's media delivery
+rules below.
 
 ## Telegram Notifications
 

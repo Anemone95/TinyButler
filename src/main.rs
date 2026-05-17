@@ -15,8 +15,8 @@ use tracing_subscriber::EnvFilter;
 
 use tinybutler::chat::{
     codex_streaming_runner_keys, load_recovered_chat_state, mark_turn_aborting, mark_turn_finished,
-    mark_turn_started, ChatAgent, ChatEvent, ChatLock, ChatRuntimeState, ChatSession,
-    ChatStateValue, CodexChatAgent,
+    mark_turn_started, ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatRuntimeState,
+    ChatSession, ChatStateValue, CodexChatAgent,
 };
 use tinybutler::config::Config;
 use tinybutler::scheduler::Scheduler;
@@ -172,9 +172,13 @@ async fn chat_new(config: Config, runner: Option<String>) -> Result<()> {
         .with_context(|| format!("missing code_agents.{runner}"))?;
 
     set_chat_selection_state(&config, ChatStateValue::SelectingNew).await?;
-    let mut agent =
-        CodexChatAgent::connect(runner.clone(), agent_config, Some(std::env::current_dir()?))
-            .await?;
+    let mut agent = CodexChatAgent::connect_with_context(
+        runner.clone(),
+        agent_config,
+        Some(std::env::current_dir()?),
+        ChatInstructionContext::LocalCli,
+    )
+    .await?;
     let session = agent.start_session().await?;
     record_selected_session(&config, session.clone()).await?;
     println!(
@@ -193,10 +197,11 @@ async fn chat_session(config: Config, session_id: Option<String>) -> Result<()> 
         .with_context(|| format!("missing code_agents.{}", session.runner))?;
 
     set_chat_selection_state(&config, ChatStateValue::SelectingSession).await?;
-    let mut agent = CodexChatAgent::connect(
+    let mut agent = CodexChatAgent::connect_with_context(
         session.runner.clone(),
         agent_config,
         Some(std::env::current_dir()?),
+        ChatInstructionContext::LocalCli,
     )
     .await?;
     let session = agent.resume_session(&session.session_id).await?;

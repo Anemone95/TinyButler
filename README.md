@@ -108,7 +108,7 @@ tinybutler chat session
 
 `tinybutler check` validates local config and task definitions. `tinybutler task status <task>` shows task details, current state, and the first 20 lines of the latest log.
 
-`tinybutler chat new` starts a local REPL for an interactive Codex chat session. `tinybutler chat session` resumes a previous session. Use `/exit` to detach and Ctrl+C to abort an active turn.
+`tinybutler chat new` starts a local REPL for an interactive Codex chat session. `tinybutler chat session` resumes a previous session. Use `/exit` to detach and Ctrl+C to abort an active turn. Local REPL sessions tell the agent to print local artifact paths; Telegram sessions tell the agent it is behind the Telegram bridge and can use Telegram media delivery.
 
 ## Telegram
 
