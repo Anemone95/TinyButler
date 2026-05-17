@@ -852,15 +852,15 @@ async fn set_bot_commands(
 
 fn bot_menu_commands() -> Vec<TelegramBotCommand> {
     vec![
-        TelegramBotCommand::new("new", "Start a TinyButler code-agent chat"),
-        TelegramBotCommand::new("session", "Resume a TinyButler chat session"),
-        TelegramBotCommand::new("abort", "Abort the active code-agent turn"),
-        TelegramBotCommand::new("task_list", "List TinyButler tasks"),
-        TelegramBotCommand::new("task_status", "Show TinyButler task status"),
-        TelegramBotCommand::new("task_run", "Run one TinyButler task now"),
-        TelegramBotCommand::new("task_enable", "Enable one TinyButler task"),
-        TelegramBotCommand::new("task_disable", "Disable one TinyButler task"),
-        TelegramBotCommand::new("help", "Show TinyButler help"),
+        TelegramBotCommand::new("new", "New chat"),
+        TelegramBotCommand::new("session", "Resume chat"),
+        TelegramBotCommand::new("abort", "Abort turn"),
+        TelegramBotCommand::new("task_list", "List tasks"),
+        TelegramBotCommand::new("task_status", "Task status"),
+        TelegramBotCommand::new("task_run", "Run task"),
+        TelegramBotCommand::new("task_enable", "Enable task"),
+        TelegramBotCommand::new("task_disable", "Disable task"),
+        TelegramBotCommand::new("help", "Help"),
     ]
 }
 
@@ -1726,7 +1726,11 @@ mod tests {
                 .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_'));
             assert!(!command.description.contains("TickClaw"));
             assert!(!command.description.contains("tickclaw"));
-            assert!(command.description.contains("TinyButler") || command.command == "abort");
+            assert!(!command.description.contains("TinyButler"));
+            assert!(!command.description.contains("tinybutler"));
+            assert!(!command.description.contains("TinyBulter"));
+            assert!(!command.description.contains("tinybulter"));
+            assert!(command.description.len() <= 16);
         }
     }
 
