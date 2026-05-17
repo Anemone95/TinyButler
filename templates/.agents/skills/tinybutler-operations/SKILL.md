@@ -84,12 +84,23 @@ converts it to Telegram MarkdownV2 before delivery. Put task names, paths, and
 other dynamic values in Markdown code spans when possible.
 
 ```bash
-tinybutler telegram --attachment /path/to/file --caption 'Markdown caption'
+tinybutler telegram --task "$TINYBUTLER_TASK_NAME" 'Markdown **message** text'
+```
+
+When a task process sends its own Telegram message, pass the current task name
+through `--task`. TinyButler sets `TINYBUTLER_TASK_NAME` for shell and agent
+task runners. The `--task` value is added to the visible Telegram message so
+future replies include the originating task context for the chat bridge and for
+debugging.
+
+```bash
+tinybutler telegram --task "$TINYBUTLER_TASK_NAME" --attachment /path/to/file --caption 'Markdown caption'
 ```
 
 Send an attachment with an optional Markdown caption. TinyButler chooses the
 Telegram display from the file type and falls back to document-style delivery for
-large logs, scripts, reports, and arbitrary files.
+large logs, scripts, reports, and arbitrary files. Include `--task` for
+task-originated attachments so the caption carries the task name.
 
 When you are talking through the TinyButler Telegram chat bridge and need to
 return an image, screenshot, or other artifact, create a local file and either
@@ -113,8 +124,9 @@ Operational guidance:
 - Shell command tasks must print Markdown text on stdout. Non-empty stdout may
   become the Telegram task summary, so write concise Markdown and avoid
   terminal-only formatting or raw control sequences.
-- Agent tasks may call `tinybutler telegram ...` themselves when a notification is
-  useful. The daemon does not auto-notify successful agent tasks.
+- Agent tasks may call `tinybutler telegram --task "$TINYBUTLER_TASK_NAME" ...`
+  themselves when a notification is useful. The daemon does not auto-notify
+  successful agent tasks.
 - The daemon sends fallback Telegram notifications for task failures, timeouts,
   and lock conflicts.
 - Shell task success sends Telegram only when stdout is non-empty. Shell task

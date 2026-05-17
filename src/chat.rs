@@ -7,7 +7,7 @@
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Local};
 use codex_codes::{
@@ -551,7 +551,8 @@ impl ChatAgent for CodexChatAgent {
             .context("no active Codex chat session")?;
         self.current_turn_id = None;
         self.abort_requested = false;
-        self.client
+        if let Err(err) = self
+            .client
             .turn_start(&TurnStartParams {
                 thread_id: session.session_id.clone(),
                 input: vec![UserInput::Text {
@@ -562,7 +563,12 @@ impl ChatAgent for CodexChatAgent {
                 sandbox_policy: None,
             })
             .await
-            .context("failed to start Codex turn")?;
+        {
+            if let Some(message) = codex_deserialization_chat_error(&err) {
+                return Err(anyhow!(message));
+            }
+            return Err(err).context("failed to start Codex turn");
+        }
 
         if let Some(active) = self.active_session.as_mut() {
             active.last_activity_at = Local::now();
@@ -574,8 +580,15 @@ impl ChatAgent for CodexChatAgent {
     }
 
     async fn next_event(&mut self) -> Result<Option<ChatEvent>> {
-        let Some(message) = self.client.next_message().await? else {
-            return Ok(None);
+        let message = match self.client.next_message().await {
+            Ok(Some(message)) => message,
+            Ok(None) => return Ok(None),
+            Err(err) => {
+                if let Some(message) = codex_deserialization_chat_error(&err) {
+                    return Ok(Some(ChatEvent::TurnFailed(message)));
+                }
+                return Err(err.into());
+            }
         };
         let event = match message {
             ServerMessage::Request { request, .. } => {
@@ -611,6 +624,38 @@ impl ChatAgent for CodexChatAgent {
             resumable: true,
         })
     }
+}
+
+fn codex_deserialization_chat_error(err: &codex_codes::Error) -> Option<String> {
+    let codex_codes::Error::Deserialization(parse_error) = err else {
+        return None;
+    };
+    if !matches!(
+        parse_error.method.as_deref(),
+        Some(methods::ITEM_STARTED | methods::ITEM_COMPLETED)
+    ) || !parse_error.error_message.contains("unknown variant")
+    {
+        return None;
+    }
+    let item_type = parse_error
+        .raw_json
+        .as_ref()?
+        .pointer("/item/type")
+        .and_then(serde_json::Value::as_str)?;
+    Some(format!(
+        "Codex item type `{}` (`{}`) is not supported by this TinyButler build. Update TinyButler's Codex protocol model before retrying.",
+        item_type,
+        codex_item_type_name(item_type)
+    ))
+}
+
+fn codex_item_type_name(item_type: &str) -> String {
+    let mut chars = item_type.chars();
+    let Some(first) = chars.next() else {
+        return "UnknownItem".to_string();
+    };
+    let rest: String = chars.collect();
+    format!("{}{rest}Item", first.to_uppercase())
 }
 
 fn chat_bridge_instructions(context: ChatInstructionContext) -> String {
@@ -796,6 +841,125 @@ mod tests {
         assert!(!instructions.contains("Telegram chat bridge"));
         assert!(!instructions.contains("ATTACH:<path>"));
         assert!(!instructions.contains("tinybutler telegram --attachment"));
+    }
+
+    #[test]
+    fn decodes_codex_file_change_started_in_progress_status() {
+        let params = serde_json::json!({
+            "item": {
+                "changes": [{
+                    "diff": "@@ -1 +1 @@\n-a\n+b\n",
+                    "kind": { "move_path": null, "type": "update" },
+                    "path": "/tmp/example.txt"
+                }],
+                "id": "call_1",
+                "status": "inProgress",
+                "type": "fileChange"
+            },
+            "startedAtMs": 1779051453356_i64,
+            "threadId": "thread_1",
+            "turnId": "turn_1"
+        });
+        let notification =
+            codex_codes::Notification::from_envelope(methods::ITEM_STARTED, Some(params))
+                .expect("fileChange inProgress should decode");
+
+        assert!(matches!(notification, Notification::ItemStarted(_)));
+    }
+
+    #[test]
+    fn decodes_codex_file_change_declined_status() {
+        let params = serde_json::json!({
+            "item": {
+                "changes": [],
+                "id": "call_1",
+                "status": "declined",
+                "type": "fileChange"
+            },
+            "completedAtMs": 1779051453356_i64,
+            "threadId": "thread_1",
+            "turnId": "turn_1"
+        });
+        let notification =
+            codex_codes::Notification::from_envelope(methods::ITEM_COMPLETED, Some(params))
+                .expect("fileChange declined should decode");
+
+        assert!(matches!(notification, Notification::ItemCompleted(_)));
+    }
+
+    #[test]
+    fn decodes_codex_image_view_started_item() {
+        let params = serde_json::json!({
+            "item": {
+                "id": "call_1",
+                "path": "/tmp/room_snapshot.jpg",
+                "type": "imageView"
+            },
+            "startedAtMs": 1779053681522_i64,
+            "threadId": "thread_1",
+            "turnId": "turn_1"
+        });
+        let notification =
+            codex_codes::Notification::from_envelope(methods::ITEM_STARTED, Some(params))
+                .expect("imageView should decode");
+
+        assert!(matches!(notification, Notification::ItemStarted(_)));
+    }
+
+    #[test]
+    fn decodes_current_codex_app_server_thread_item_types() {
+        let samples = [
+            serde_json::json!({ "id": "hook_1", "type": "hookPrompt" }),
+            serde_json::json!({ "id": "plan_1", "text": "check state", "type": "plan" }),
+            serde_json::json!({ "id": "dyn_1", "type": "dynamicToolCall" }),
+            serde_json::json!({ "id": "collab_1", "type": "collabAgentToolCall" }),
+            serde_json::json!({ "id": "img_1", "status": "completed", "type": "imageGeneration" }),
+            serde_json::json!({ "id": "review_1", "type": "enteredReviewMode" }),
+            serde_json::json!({ "id": "review_2", "type": "exitedReviewMode" }),
+            serde_json::json!({ "id": "compact_1", "type": "contextCompaction" }),
+        ];
+
+        for item in samples {
+            let params = serde_json::json!({
+                "item": item,
+                "startedAtMs": 1779053681522_i64,
+                "threadId": "thread_1",
+                "turnId": "turn_1"
+            });
+            let notification =
+                codex_codes::Notification::from_envelope(methods::ITEM_STARTED, Some(params))
+                    .expect("current Codex app-server item should decode");
+
+            assert!(matches!(notification, Notification::ItemStarted(_)));
+        }
+    }
+
+    #[test]
+    fn reports_unknown_codex_item_type_with_friendly_message() {
+        let params = serde_json::json!({
+            "item": {
+                "id": "call_1",
+                "path": "/tmp/example.wav",
+                "type": "audioView"
+            },
+            "startedAtMs": 1779053681522_i64,
+            "threadId": "thread_1",
+            "turnId": "turn_1"
+        });
+        let serde_error =
+            codex_codes::Notification::from_envelope(methods::ITEM_STARTED, Some(params.clone()))
+                .expect_err("audioView is intentionally unsupported in this test");
+        let parse_error = codex_codes::ParseError::from_envelope(
+            methods::ITEM_STARTED,
+            Some(params),
+            serde_error,
+        );
+        let error = codex_codes::Error::Deserialization(parse_error);
+        let message = codex_deserialization_chat_error(&error).expect("friendly error");
+
+        assert!(message.contains("audioView"));
+        assert!(message.contains("AudioViewItem"));
+        assert!(!message.contains("\"startedAtMs\""));
     }
 
     #[tokio::test]

@@ -74,6 +74,28 @@ pub async fn send_attachment(config: &Config, path: &Path, caption: Option<&str>
     .await
 }
 
+/// Prefix outbound Telegram text with task context when a task name is known.
+pub fn with_task_context(text: &str, task_name: Option<&str>) -> String {
+    let Some(task_name) = task_name.map(str::trim).filter(|name| !name.is_empty()) else {
+        return text.to_string();
+    };
+    format!("**TinyButler task:** {}\n\n{text}", inline_code(task_name))
+}
+
+/// Build an attachment caption that carries task context for later replies.
+pub fn caption_with_task_context(caption: Option<&str>, task_name: Option<&str>) -> Option<String> {
+    let caption = caption.map(str::trim).filter(|caption| !caption.is_empty());
+    let Some(task_name) = task_name.map(str::trim).filter(|name| !name.is_empty()) else {
+        return caption.map(ToOwned::to_owned);
+    };
+    let mut text = format!("**TinyButler task:** {}", inline_code(task_name));
+    if let Some(caption) = caption {
+        text.push_str("\n\n");
+        text.push_str(caption);
+    }
+    Some(text)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TelegramAttachment {
     method: &'static str,
@@ -219,8 +241,15 @@ async fn handle_message(
     };
     let command = parse_ingress_command(text);
     if matches!(command, IngressCommand::Unknown(_)) && !text.trim().starts_with('/') {
-        return handle_bare_chat_text(config, abort_sender, &chat_id, message.message_id, text)
-            .await;
+        let turn_text = telegram_chat_turn_text(text, message.reply_to_message.as_deref());
+        return handle_bare_chat_text(
+            config,
+            abort_sender,
+            &chat_id,
+            message.message_id,
+            &turn_text,
+        )
+        .await;
     }
     handle_command(config, abort_sender, &chat_id, text).await
 }
@@ -616,6 +645,30 @@ async fn handle_bare_chat_text(
         *abort_sender_for_task.lock().expect("abort mutex poisoned") = None;
     });
     Ok(())
+}
+
+fn telegram_chat_turn_text(text: &str, reply_to: Option<&TelegramMessage>) -> String {
+    let Some(reply_to) = reply_to else {
+        return text.to_string();
+    };
+    let Some(reply_text) = telegram_message_context_text(reply_to) else {
+        return text.to_string();
+    };
+    format!(
+        "The user replied to this Telegram message:\n{}\n\nUser reply:\n{}",
+        markdown_code_block(&reply_text),
+        text
+    )
+}
+
+fn telegram_message_context_text(message: &TelegramMessage) -> Option<String> {
+    message
+        .text
+        .as_deref()
+        .or(message.caption.as_deref())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToString::to_string)
 }
 
 async fn handle_callback(config: &Config, callback: &TelegramCallbackQuery) -> Result<()> {
@@ -1356,6 +1409,8 @@ struct TelegramMessage {
     message_id: i64,
     chat: TelegramChat,
     text: Option<String>,
+    caption: Option<String>,
+    reply_to_message: Option<Box<TelegramMessage>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1987,6 +2042,57 @@ mod tests {
 
         assert!(!nonresumable_chat_error(&missing_rollout));
         assert!(nonresumable_chat_error(&other_resume));
+    }
+
+    #[test]
+    fn includes_replied_telegram_text_in_chat_turn_prompt() {
+        let message: TelegramMessage = serde_json::from_value(json!({
+            "message_id": 2,
+            "chat": { "id": 1 },
+            "text": "请发送这个快照",
+            "reply_to_message": {
+                "message_id": 1,
+                "chat": { "id": 1 },
+                "text": "检测到室内安全隐患：摄像头遮挡或无效画面。\n快照路径：/tmp/room_snapshot.jpg"
+            }
+        }))
+        .expect("telegram reply message decodes");
+
+        let prompt = telegram_chat_turn_text(
+            message.text.as_deref().expect("message text"),
+            message.reply_to_message.as_deref(),
+        );
+
+        assert!(prompt.contains("The user replied to this Telegram message:"));
+        assert!(prompt.contains("快照路径：/tmp/room_snapshot.jpg"));
+        assert!(prompt.contains("User reply:\n请发送这个快照"));
+    }
+
+    #[test]
+    fn uses_plain_text_for_non_reply_chat_turn_prompt() {
+        assert_eq!(telegram_chat_turn_text("hello", None), "hello");
+    }
+
+    #[test]
+    fn adds_task_context_to_telegram_text_and_captions() {
+        assert_eq!(
+            with_task_context("done", Some("regular-check")),
+            "**TinyButler task:** `regular-check`\n\ndone"
+        );
+        assert_eq!(with_task_context("done", None), "done");
+        assert_eq!(
+            caption_with_task_context(Some("snapshot"), Some("room check")).as_deref(),
+            Some("**TinyButler task:** `room check`\n\nsnapshot")
+        );
+        assert_eq!(
+            caption_with_task_context(None, Some("room check")).as_deref(),
+            Some("**TinyButler task:** `room check`")
+        );
+        assert_eq!(
+            caption_with_task_context(Some("snapshot"), None).as_deref(),
+            Some("snapshot")
+        );
+        assert_eq!(caption_with_task_context(Some("   "), None), None);
     }
 
     #[test]

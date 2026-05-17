@@ -156,6 +156,7 @@ async fn run_shell(task: &Task) -> Result<ProcessOutput> {
     let mut command = Command::new("bash");
     command.arg(script);
     command.current_dir(&task.dir);
+    apply_task_environment(&mut command, task);
     command.kill_on_drop(true);
     run_command(command, None, task.timeout).await
 }
@@ -206,6 +207,7 @@ async fn run_agent_command(
 ) -> Result<ProcessOutput> {
     let mut command = Command::new(&agent.command);
     command.current_dir(&task.dir);
+    apply_task_environment(&mut command, task);
     command.kill_on_drop(true);
 
     let mut prompt_in_args = false;
@@ -222,6 +224,10 @@ async fn run_agent_command(
         Some(prompt.to_string())
     };
     run_command(command, stdin_text, task.timeout).await
+}
+
+fn apply_task_environment(command: &mut Command, task: &Task) {
+    command.env("TINYBUTLER_TASK_NAME", &task.name);
 }
 
 /// Expand placeholders supported by local code-agent command templates.
@@ -330,5 +336,30 @@ mod tests {
 
         assert!(prompt.starts_with(AGENT_TASK_CONTEXT));
         assert!(prompt.contains("\n\nInspect task state."));
+    }
+
+    #[tokio::test]
+    async fn shell_tasks_receive_current_task_name_environment() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let task = Task {
+            name: "env-task".to_string(),
+            enabled: true,
+            schedule: "0 * * * *".to_string(),
+            runner: None,
+            task_type: TaskType::Command,
+            session: SessionMode::Independent,
+            timeout: 30,
+            dir: temp.path().to_path_buf(),
+        };
+        fs::write(
+            task.run_script_path(),
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$TINYBUTLER_TASK_NAME\"\n",
+        )
+        .await
+        .expect("write run.sh");
+
+        let output = run_shell(&task).await.expect("run shell task");
+
+        assert_eq!(output.stdout.trim(), "env-task");
     }
 }

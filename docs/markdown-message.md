@@ -34,6 +34,8 @@ TinyButler chooses the Telegram Bot API send method from file type: image files 
 
 Captions follow the same Markdown-to-Telegram conversion path as text messages.
 
+`tinybutler telegram` accepts `--task <task-name>` for task-originated messages. When present, TinyButler prefixes text messages and attachment captions with `**TinyButler task:** <task-name>` using a Markdown code span for the task name. This makes Telegram replies carry the originating task context back into the chat bridge and keeps manual debugging tied to the task that sent the message.
+
 Telegram also has specialized displays such as `sendVoice`, `sendVideoNote`, and `sendSticker`. Add those only when TinyButler can validate their stricter format and semantic requirements instead of guessing from an ordinary attachment path.
 
 ## Attachment Directives
@@ -49,6 +51,8 @@ Do not treat arbitrary plain text or secret-like files as sendable attachments.
 Captions should come from the remaining visible text, not from the `ATTACH:` marker itself. Keep Telegram caption limits in mind; long text should be sent separately.
 
 TinyButler should expose the same behavior directly through `tinybutler telegram --attachment <path>` for agents that choose to send files themselves.
+
+Agents running inside a TinyButler task receive `TINYBUTLER_TASK_NAME` in the process environment and should pass it through, for example `tinybutler telegram --task "$TINYBUTLER_TASK_NAME" 'message'`.
 
 As a compatibility fallback for code agents that create a screenshot but forget the `ATTACH:` marker, TinyButler may detect existing local image paths mentioned plainly in the final assistant-visible answer and upload those supported image files once. `ATTACH:` remains the preferred explicit protocol.
 

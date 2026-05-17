@@ -116,6 +116,8 @@ CLI commands such as `tinybutler check`, `tinybutler tasks`, `tinybutler task li
 
 On each scheduler tick, the daemon validates task schema, decides whether a task is due, locks the task directory, runs `agent.md` or `run.sh`, writes stdout and stderr to `logs/`, updates `state.json`, and sends Telegram notification when notification rules require it.
 
+Task runner processes receive `TINYBUTLER_TASK_NAME` in their environment. Shell scripts and agent tasks that send their own Telegram messages should pass this through with `tinybutler telegram --task "$TINYBUTLER_TASK_NAME" ...` so the outgoing message carries task context for later Telegram replies and debugging.
+
 ## Execution Rules
 
 TinyButler validates `task.yaml` before running a task.
@@ -152,7 +154,7 @@ DST behavior follows `croner` and the local timezone. `next_run_at` is stored as
 
 Task notification rules define when the daemon should notify. Markdown conversion, attachment delivery, chunking, and Telegram send methods are owned by [markdown-message.md](markdown-message.md).
 
-- Agent task success: the daemon does not auto-notify. The agent may call `tinybutler telegram ...` itself when a notification is useful.
+- Agent task success: the daemon does not auto-notify. The agent may call `tinybutler telegram --task "$TINYBUTLER_TASK_NAME" ...` itself when a notification is useful.
 - Agent task failure, timeout, or lock conflict: the daemon sends a fallback Telegram notification.
 - Shell task success with non-empty stdout: the daemon sends a Telegram notification with a stdout summary.
 - Shell task success with empty stdout: the daemon sends no Telegram notification.

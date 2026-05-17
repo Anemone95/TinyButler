@@ -64,6 +64,9 @@ enum Command {
         /// Optional attachment caption.
         #[arg(long)]
         caption: Option<String>,
+        /// Task name to include in the Telegram message context.
+        #[arg(long)]
+        task: Option<String>,
     },
     /// Open the task selector.
     Tasks,
@@ -147,7 +150,8 @@ async fn main() -> Result<()> {
             message,
             attachment,
             caption,
-        } => send_telegram(&config, message, attachment, caption).await,
+            task,
+        } => send_telegram(&config, message, attachment, caption, task).await,
         Command::Tasks => {
             let scheduler = Scheduler::new(config);
             run_task_selector(&scheduler).await
@@ -654,6 +658,7 @@ async fn send_telegram(
     message: Option<String>,
     attachment: Option<PathBuf>,
     caption: Option<String>,
+    task: Option<String>,
 ) -> Result<()> {
     let selected = message.is_some() as u8 + attachment.is_some() as u8;
     if selected != 1 {
@@ -661,9 +666,11 @@ async fn send_telegram(
     }
 
     if let Some(message) = message {
+        let message = telegram::with_task_context(&message, task.as_deref());
         return telegram::send_text(config, &message).await;
     }
     if let Some(attachment) = attachment {
+        let caption = telegram::caption_with_task_context(caption.as_deref(), task.as_deref());
         return telegram::send_attachment(config, &attachment, caption.as_deref()).await;
     }
 
