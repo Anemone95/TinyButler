@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use telegram_markdown_v2::{convert_with_strategy, UnsupportedTagsStrategy};
 use tokio::fs;
+use tokio::process::Command;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
@@ -25,7 +26,7 @@ use crate::chat::{
     mark_chat_inactive, mark_turn_finished, mark_turn_started, ChatAgent, ChatEvent,
     ChatInstructionContext, ChatLock, ChatSession, ChatStateValue, CodexChatAgent,
 };
-use crate::config::Config;
+use crate::config::{read_daemon_pid_record, Config, DaemonPidRecord};
 use crate::scheduler::Scheduler;
 
 /// Telegram parse mode used by TinyButler-generated and CLI-authored messages.
@@ -47,6 +48,7 @@ pub enum IngressCommand {
     Session,
     Abort,
     Tasks,
+    Restart,
     Unknown(String),
 }
 
@@ -226,6 +228,7 @@ pub fn parse_ingress_command(text: &str) -> IngressCommand {
         "session" => IngressCommand::Session,
         "abort" => IngressCommand::Abort,
         "tasks" => IngressCommand::Tasks,
+        "restart" => IngressCommand::Restart,
         _ => IngressCommand::Unknown(trimmed.to_string()),
     }
 }
@@ -275,6 +278,9 @@ async fn handle_command(
         IngressCommand::Tasks => {
             return handle_tasks_command(config, chat_id).await;
         }
+        IngressCommand::Restart => {
+            return handle_restart_command(config, chat_id).await;
+        }
         IngressCommand::Unknown(text) => {
             if text.is_empty() {
                 help_text()
@@ -309,9 +315,56 @@ fn help_text() -> String {
             "abort the active code-agent turn"
         ),
         format!("{}: {}", inline_code("/tasks"), "open the task selector"),
+        format!(
+            "{}: {}",
+            inline_code("/restart"),
+            "check config and restart"
+        ),
         format!("{}: {}", inline_code("/help"), "show this help"),
     ]
     .join("\n")
+}
+
+async fn handle_restart_command(config: &Config, chat_id: &str) -> Result<()> {
+    let scheduler = Scheduler::new(config.clone());
+    scheduler.check().await?;
+    let record = read_valid_daemon_pid_record(config)?;
+    send_markdown_text_to_chat(
+        config,
+        chat_id,
+        &format!(
+            "TinyButler check passed. Restarting daemon pid {}.",
+            inline_code(&record.pid.to_string())
+        ),
+    )
+    .await?;
+    signal_daemon_restart(&record).await
+}
+
+fn read_valid_daemon_pid_record(config: &Config) -> Result<DaemonPidRecord> {
+    let record = read_daemon_pid_record(&config.daemon_pid_path())?;
+    record.validate_for_home(&config.home)?;
+    Ok(record)
+}
+
+async fn signal_daemon_restart(record: &DaemonPidRecord) -> Result<()> {
+    let output = Command::new("kill")
+        .args(["-USR2", &record.pid.to_string()])
+        .output()
+        .await
+        .with_context(|| format!("failed to signal TinyButler daemon pid {}", record.pid))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "failed to signal TinyButler daemon pid {} with status {}\nstdout:\n{}\nstderr:\n{}",
+            record.pid,
+            output.status,
+            stdout.trim(),
+            stderr.trim()
+        );
+    }
+    Ok(())
 }
 
 async fn handle_tasks_command(config: &Config, chat_id: &str) -> Result<()> {
@@ -1039,6 +1092,7 @@ fn bot_menu_commands() -> Vec<TelegramBotCommand> {
         TelegramBotCommand::new("session", "Resume chat"),
         TelegramBotCommand::new("abort", "Abort turn"),
         TelegramBotCommand::new("tasks", "Task selector"),
+        TelegramBotCommand::new("restart", "Restart"),
         TelegramBotCommand::new("help", "Help"),
     ]
 }
@@ -2000,7 +2054,7 @@ mod tests {
 
         assert_eq!(
             command_names,
-            vec!["new", "session", "abort", "tasks", "help"]
+            vec!["new", "session", "abort", "tasks", "restart", "help"]
         );
         for command in commands {
             assert!(command

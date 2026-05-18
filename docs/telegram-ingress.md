@@ -35,7 +35,7 @@ Every user-facing slash command must map to local CLI behavior first.
 
 | Local CLI | Telegram | Meaning |
 | --- | --- | --- |
-| `tinybutler check` | `/check` | Validate TinyButler-controlled config and task files |
+| `tinybutler restart` | `/restart` | Validate config and task files, then restart the daemon |
 
 Task command mappings are defined in [tasks.md](tasks.md). Chat command mappings are defined in [chatbridge.md](chatbridge.md).
 

@@ -12,6 +12,11 @@ fn parses_tasks_slash_command() {
         parse_ingress_command("/tasks@OpenClawBot"),
         IngressCommand::Tasks
     );
+    assert_eq!(parse_ingress_command("/restart"), IngressCommand::Restart);
+    assert_eq!(
+        parse_ingress_command("/restart@OpenClawBot"),
+        IngressCommand::Restart
+    );
 }
 
 #[test]

@@ -143,6 +143,7 @@ Telegram ingress commands handled by the daemon:
 ```text
 /help
 /tasks
+/restart
 /new
 /session
 /abort
@@ -150,10 +151,11 @@ Telegram ingress commands handled by the daemon:
 
 Use `/tasks` for task management. It opens a Telegram button menu, and selecting
 a task opens its detail view with `status`, `run`, `enable` or `disable`, and
-`exit` actions. After `/new` or `/session` selects a code-agent session, bare
-text in the configured Telegram chat is redirected to that active session until
-it is replaced. `/abort` interrupts the active turn without deleting the
-resumable session.
+`exit` actions. Use `/restart` to validate config and task files, then restart
+the daemon. After `/new` or `/session` selects a code-agent session, bare text in
+the configured Telegram chat is redirected to that active session until it is
+replaced. `/abort` interrupts the active turn without deleting the resumable
+session.
 
 ## Runtime Layout
 

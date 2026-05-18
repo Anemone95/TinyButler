@@ -120,7 +120,7 @@ TinyButler uses Telegram Bot HTTP API calls. `tinybutler telegram '<message>'`, 
 
 When `tinybutler daemon` starts with Telegram configured, it sends a restart notification and refreshes the bot slash-command menu for the configured chat so clients show the current command names and compact descriptions.
 
-When the daemon is running, Telegram supports `/tasks` for the task selector and `/new`, `/session`, and `/abort` for the interactive code-agent chat bridge. `/tasks` opens a task button menu, `/new` opens a model menu, `/session` opens a resumable-session menu, and bare Telegram text is redirected to the active chat session after selection.
+When the daemon is running, Telegram supports `/tasks` for the task selector, `/restart` for check-then-restart, and `/new`, `/session`, and `/abort` for the interactive code-agent chat bridge. `/tasks` opens a task button menu, `/restart` validates local config and task files before restarting the daemon, `/new` opens a model menu, `/session` opens a resumable-session menu, and bare Telegram text is redirected to the active chat session after selection.
 
 For chat-bridge attachment replies, a code agent can create a local artifact and include `ATTACH:<path>` on its own line in the final answer. TinyButler removes the marker from visible text and uploads supported files to Telegram using the most suitable attachment display. As a compatibility fallback, TinyButler also detects existing local image paths in final replies and uploads them once. The bridge strips hidden reasoning tags from final replies so the chat focuses on the answer and delivered attachments.
 

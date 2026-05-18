@@ -193,11 +193,12 @@ impl DaemonPidRecord {
         Ok(())
     }
 
-    /// Whether this record was rewritten by a daemon exec after `previous`.
+    /// Whether this record was rewritten by a restart after `previous`.
     pub fn is_restart_of(&self, previous: &Self) -> bool {
-        self.pid == previous.pid
-            && self.start_time_ticks == previous.start_time_ticks
-            && self.launched_at_unix_nanos != previous.launched_at_unix_nanos
+        self.home == previous.home
+            && (self.pid != previous.pid
+                || self.start_time_ticks != previous.start_time_ticks
+                || self.launched_at_unix_nanos != previous.launched_at_unix_nanos)
     }
 }
 

@@ -190,6 +190,7 @@ Test slash command routing by sending messages to the bot:
 - `/new` should reply `Select a model:` when streaming-capable Codex runners are configured.
 - `/session` should either show a session menu or reply `No resumable chat sessions`.
 - `/abort` should abort a busy turn or reply `No active chat turn to abort`.
+- `/restart` should validate config and task files, acknowledge the restart request, and then send the daemon startup notification after restart.
 
 The available `mcp-telegram` tool can send and read messages but cannot click Telegram inline buttons. For callback-query coverage, verify the menu message is delivered and then click task/action buttons manually in a Telegram client, or use a future test tool that can trigger callback queries.
 
