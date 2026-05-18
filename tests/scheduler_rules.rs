@@ -16,10 +16,10 @@ fn task(task_type: TaskType) -> Task {
         name: "demo".to_string(),
         enabled: true,
         schedule: "*/10 * * * *".to_string(),
-        runner: if task_type == TaskType::Agent {
-            Some("gpt-5.5".to_string())
+        agents: if task_type == TaskType::Agent {
+            vec!["gpt-5.5".to_string()]
         } else {
-            None
+            Vec::new()
         },
         task_type,
         session: SessionMode::Independent,
@@ -38,6 +38,7 @@ fn outcome(status: &str, stdout: &str) -> RunOutcome {
         log_relative_path: "logs/test.log".to_string(),
         summary: stdout.to_string(),
         session_id: None,
+        agent_runner: None,
         stdout: stdout.to_string(),
     }
 }

@@ -15,6 +15,8 @@ use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{self, ClearType};
+use tokio::process::Command as SystemCommand;
+use tokio::time::{sleep, Instant};
 use tracing_subscriber::EnvFilter;
 
 use tinybutler::chat::{
@@ -23,7 +25,7 @@ use tinybutler::chat::{
     ChatInstructionContext, ChatLock, ChatRuntimeState, ChatSession, ChatStateValue,
     CodexChatAgent,
 };
-use tinybutler::config::Config;
+use tinybutler::config::{read_daemon_pid_record, Config, DaemonPidRecord};
 use tinybutler::scheduler::Scheduler;
 use tinybutler::telegram;
 
@@ -54,6 +56,8 @@ enum Command {
     },
     /// Validate config and task definitions.
     Check,
+    /// Validate config and task definitions, then signal the daemon to restart.
+    Restart,
     /// Send outbound Telegram text or attachment messages.
     Telegram {
         /// Text message to send.
@@ -146,6 +150,7 @@ async fn main() -> Result<()> {
             let scheduler = Scheduler::new(config);
             scheduler.check().await
         }
+        Command::Restart => restart_service(&config).await,
         Command::Telegram {
             message,
             attachment,
@@ -167,6 +172,65 @@ async fn main() -> Result<()> {
             ChatCommand::New { runner } => chat_new(config, runner).await,
             ChatCommand::Session { session_id } => chat_session(config, session_id).await,
         },
+    }
+}
+
+async fn restart_service(config: &Config) -> Result<()> {
+    let scheduler = Scheduler::new(config.clone());
+    scheduler.check().await?;
+
+    let before = read_valid_daemon_pid_record(config)?;
+    let output = SystemCommand::new("kill")
+        .args(["-USR2", &before.pid.to_string()])
+        .output()
+        .await
+        .with_context(|| format!("failed to signal TinyButler daemon pid {}", before.pid))?;
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "failed to signal TinyButler daemon pid {} with status {}\nstdout:\n{}\nstderr:\n{}",
+            before.pid,
+            output.status,
+            stdout.trim(),
+            stderr.trim()
+        );
+    }
+
+    wait_for_daemon_restart(config, &before).await?;
+    println!("Restarted TinyButler daemon via pid {}", before.pid);
+    Ok(())
+}
+
+fn read_valid_daemon_pid_record(config: &Config) -> Result<DaemonPidRecord> {
+    let record = read_daemon_pid_record(&config.daemon_pid_path())?;
+    record.validate_for_home(&config.home)?;
+    Ok(record)
+}
+
+async fn wait_for_daemon_restart(config: &Config, before: &DaemonPidRecord) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_error = None;
+
+    loop {
+        if Instant::now() >= deadline {
+            let detail = last_error
+                .map(|err| format!(" last error: {err:#}"))
+                .unwrap_or_default();
+            bail!(
+                "timed out waiting for TinyButler daemon pid {} to restart.{}",
+                before.pid,
+                detail
+            );
+        }
+
+        sleep(Duration::from_millis(100)).await;
+        match read_valid_daemon_pid_record(config) {
+            Ok(after) if after.is_restart_of(before) => return Ok(()),
+            Ok(_) => {}
+            Err(err) => last_error = Some(err),
+        }
     }
 }
 

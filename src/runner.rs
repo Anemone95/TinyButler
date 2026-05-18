@@ -38,6 +38,8 @@ pub struct RunOutcome {
     pub summary: String,
     /// Agent session id extracted from structured runner output, when present.
     pub session_id: Option<String>,
+    /// Code-agent runner key that produced this output.
+    pub agent_runner: Option<String>,
     /// Captured stdout from the runner process.
     pub stdout: String,
 }
@@ -52,16 +54,13 @@ pub async fn run_task(config: &Config, task: &Task, state: &TaskState) -> Result
     let output = match task.task_type {
         TaskType::Command => run_shell(task).await,
         TaskType::Agent => {
-            let runner = task
-                .runner
-                .as_deref()
-                .context("agent task requires runner")?;
-            run_code_agent(config, runner, task, state).await
+            let runners = task.agent_runner_keys();
+            run_code_agents(config, &runners, task, state).await
         }
     };
     let duration_seconds = started.elapsed().as_secs();
 
-    let (status, exit_code, stdout, stderr, session_id) = match output {
+    let (status, exit_code, stdout, stderr, session_id, agent_runner) = match output {
         Ok(output) => {
             let status = if output.exit_code == Some(0) {
                 "success".to_string()
@@ -74,6 +73,7 @@ pub async fn run_task(config: &Config, task: &Task, state: &TaskState) -> Result
                 output.stdout,
                 output.stderr,
                 output.session_id,
+                output.agent_runner,
             )
         }
         Err(err) => (
@@ -81,6 +81,7 @@ pub async fn run_task(config: &Config, task: &Task, state: &TaskState) -> Result
             None,
             String::new(),
             format!("{err:#}"),
+            None,
             None,
         ),
     };
@@ -106,6 +107,7 @@ pub async fn run_task(config: &Config, task: &Task, state: &TaskState) -> Result
         log_relative_path,
         summary,
         session_id,
+        agent_runner,
         stdout,
     })
 }
@@ -134,6 +136,7 @@ pub async fn run_failure(task: &Task, status: &str, stderr: &str) -> Result<RunO
         log_relative_path,
         summary,
         session_id: None,
+        agent_runner: None,
         stdout: String::new(),
     })
 }
@@ -145,6 +148,7 @@ struct ProcessOutput {
     stdout: String,
     stderr: String,
     session_id: Option<String>,
+    agent_runner: Option<String>,
 }
 
 async fn run_shell(task: &Task) -> Result<ProcessOutput> {
@@ -161,39 +165,86 @@ async fn run_shell(task: &Task) -> Result<ProcessOutput> {
     run_command(command, None, task.timeout).await
 }
 
-/// Run a configured code-agent command with `agent.md` as the task prompt.
-async fn run_code_agent(
+/// Run configured code-agent commands with `agent.md` as the task prompt.
+async fn run_code_agents(
     config: &Config,
-    runner_key: &str,
+    runner_keys: &[&str],
     task: &Task,
     state: &TaskState,
 ) -> Result<ProcessOutput> {
-    let agent = config
-        .code_agents
-        .get(runner_key)
-        .with_context(|| format!("missing code_agents.{runner_key} in config.yaml"))?;
+    if runner_keys.is_empty() {
+        bail!("agent task requires at least one runner");
+    }
     let prompt_path = task.agent_path();
     let prompt = fs::read_to_string(&prompt_path)
         .await
         .with_context(|| format!("failed to read {}", prompt_path.display()))?;
     let prompt = agent_task_prompt(&prompt);
 
-    if task.session == SessionMode::Reuse {
-        if let Some(session_id) = state.session_id.as_deref().filter(|s| !s.is_empty()) {
-            if !agent.resume_args.is_empty() {
-                return run_agent_command(
-                    agent,
-                    &agent.resume_args,
-                    task,
-                    &prompt,
-                    Some(session_id),
-                )
-                .await;
+    let mut failed_stdout = String::new();
+    let mut failed_stderr = String::new();
+    let mut last_exit_code = None;
+
+    for runner_key in runner_keys {
+        let output = run_code_agent(config, runner_key, task, state, &prompt).await;
+        match output {
+            Ok(output) if output.exit_code == Some(0) => {
+                if failed_stdout.is_empty() && failed_stderr.is_empty() {
+                    return Ok(output);
+                }
+                return Ok(output_with_previous_attempts(
+                    runner_key,
+                    output,
+                    failed_stdout,
+                    failed_stderr,
+                ));
+            }
+            Ok(output) => {
+                last_exit_code = output.exit_code;
+                append_attempt_output(&mut failed_stdout, &mut failed_stderr, runner_key, &output);
+            }
+            Err(err) => {
+                append_attempt_error(&mut failed_stderr, runner_key, &err);
             }
         }
     }
 
-    run_agent_command(agent, &agent.args, task, &prompt, None).await
+    Ok(ProcessOutput {
+        exit_code: last_exit_code,
+        stdout: failed_stdout,
+        stderr: failed_stderr,
+        session_id: None,
+        agent_runner: None,
+    })
+}
+
+/// Run one configured code-agent command.
+async fn run_code_agent(
+    config: &Config,
+    runner_key: &str,
+    task: &Task,
+    state: &TaskState,
+    prompt: &str,
+) -> Result<ProcessOutput> {
+    let agent = config
+        .code_agents
+        .get(runner_key)
+        .with_context(|| format!("missing code_agents.{runner_key} in config.yaml"))?;
+    if task.session == SessionMode::Reuse {
+        if let Some(session_id) = reusable_session_id(state, runner_key) {
+            if !agent.resume_args.is_empty() {
+                let mut output =
+                    run_agent_command(agent, &agent.resume_args, task, prompt, Some(session_id))
+                        .await?;
+                output.agent_runner = Some(runner_key.to_string());
+                return Ok(output);
+            }
+        }
+    }
+
+    let mut output = run_agent_command(agent, &agent.args, task, prompt, None).await?;
+    output.agent_runner = Some(runner_key.to_string());
+    Ok(output)
 }
 
 /// Build a user-configured agent command and feed the prompt on stdin unless
@@ -224,6 +275,56 @@ async fn run_agent_command(
         Some(prompt.to_string())
     };
     run_command(command, stdin_text, task.timeout).await
+}
+
+fn reusable_session_id<'a>(state: &'a TaskState, runner_key: &str) -> Option<&'a str> {
+    let session_id = state.session_id.as_deref().filter(|s| !s.is_empty())?;
+    match state.session_runner.as_deref() {
+        Some(session_runner) if session_runner != runner_key => None,
+        _ => Some(session_id),
+    }
+}
+
+fn output_with_previous_attempts(
+    runner_key: &str,
+    output: ProcessOutput,
+    mut stdout: String,
+    mut stderr: String,
+) -> ProcessOutput {
+    append_attempt_output(&mut stdout, &mut stderr, runner_key, &output);
+    ProcessOutput {
+        stdout,
+        stderr,
+        ..output
+    }
+}
+
+fn append_attempt_output(
+    stdout: &mut String,
+    stderr: &mut String,
+    runner_key: &str,
+    output: &ProcessOutput,
+) {
+    if !output.stdout.is_empty() {
+        push_attempt_section(stdout, runner_key, "stdout", &output.stdout);
+    }
+    let stderr_header = format!("stderr exit_code={:?}", output.exit_code);
+    push_attempt_section(stderr, runner_key, &stderr_header, &output.stderr);
+}
+
+fn append_attempt_error(stderr: &mut String, runner_key: &str, err: &anyhow::Error) {
+    push_attempt_section(stderr, runner_key, "error", &format!("{err:#}"));
+}
+
+fn push_attempt_section(target: &mut String, runner_key: &str, label: &str, text: &str) {
+    if !target.is_empty() && !target.ends_with('\n') {
+        target.push('\n');
+    }
+    target.push_str(&format!("--- agent {runner_key} {label} ---\n"));
+    target.push_str(text);
+    if !target.ends_with('\n') {
+        target.push('\n');
+    }
 }
 
 fn apply_task_environment(command: &mut Command, task: &Task) {
@@ -276,6 +377,7 @@ async fn run_command(
         stdout,
         stderr,
         session_id,
+        agent_runner: None,
     })
 }
 
@@ -329,6 +431,7 @@ fn find_string_key(value: &Value, keys: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn agent_task_prompt_includes_tinybutler_context() {
@@ -345,7 +448,7 @@ mod tests {
             name: "env-task".to_string(),
             enabled: true,
             schedule: "0 * * * *".to_string(),
-            runner: None,
+            agents: Vec::new(),
             task_type: TaskType::Command,
             session: SessionMode::Independent,
             timeout: 30,
@@ -361,5 +464,69 @@ mod tests {
         let output = run_shell(&task).await.expect("run shell task");
 
         assert_eq!(output.stdout.trim(), "env-task");
+    }
+
+    #[tokio::test]
+    async fn agent_tasks_fall_back_until_one_runner_succeeds() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let task = Task {
+            name: "fallback-task".to_string(),
+            enabled: true,
+            schedule: "0 * * * *".to_string(),
+            agents: vec!["fail-agent".to_string(), "success-agent".to_string()],
+            task_type: TaskType::Agent,
+            session: SessionMode::Independent,
+            timeout: 30,
+            dir: temp.path().to_path_buf(),
+        };
+        fs::write(task.agent_path(), "Report status.")
+            .await
+            .expect("write agent.md");
+
+        let mut code_agents = BTreeMap::new();
+        code_agents.insert(
+            "fail-agent".to_string(),
+            CodeAgentConfig {
+                command: "/bin/sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "printf 'first failed\\n'; printf 'bad agent\\n' >&2; exit 7".to_string(),
+                ],
+                ..Default::default()
+            },
+        );
+        code_agents.insert(
+            "success-agent".to_string(),
+            CodeAgentConfig {
+                command: "/bin/sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "cat >/dev/null; printf '{\"session_id\":\"session-ok\"}\\n'".to_string(),
+                ],
+                ..Default::default()
+            },
+        );
+        let config = Config {
+            home: temp.path().to_path_buf(),
+            telegram: Default::default(),
+            code_agents,
+        };
+
+        let outcome = run_task(&config, &task, &TaskState::default())
+            .await
+            .expect("run task");
+
+        assert_eq!(outcome.status, "success");
+        assert_eq!(outcome.exit_code, Some(0));
+        assert_eq!(outcome.session_id.as_deref(), Some("session-ok"));
+        assert_eq!(outcome.agent_runner.as_deref(), Some("success-agent"));
+        assert!(outcome.stdout.contains("--- agent fail-agent stdout ---"));
+        assert!(outcome
+            .stdout
+            .contains("--- agent success-agent stdout ---"));
+        let log = fs::read_to_string(outcome.log_path)
+            .await
+            .expect("read log");
+        assert!(log.contains("--- agent fail-agent stderr exit_code=Some(7) ---"));
     }
 }

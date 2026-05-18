@@ -7,9 +7,11 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration as StdDuration, Instant};
 
 use chrono::{Datelike, Duration, Local, Months};
 use serde_json::json;
+use tinybutler::config::DaemonPidRecord;
 
 /// Return the compiled TinyButler binary path provided by Cargo integration tests.
 fn tinybutler_bin() -> PathBuf {
@@ -80,6 +82,24 @@ fn relative_files(root: &Path) -> Vec<PathBuf> {
 /// Convert command stderr into UTF-8 for readable failure messages.
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+/// Wait for the daemon to write parseable pid metadata.
+fn wait_for_pid_record(path: &Path) -> DaemonPidRecord {
+    let deadline = Instant::now() + StdDuration::from_secs(5);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if let Ok(record) = serde_yaml::from_str::<DaemonPidRecord>(&text) {
+                return record;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for daemon pid record at {}",
+            path.display()
+        );
+        std::thread::sleep(StdDuration::from_millis(50));
+    }
 }
 
 /// Return a timestamped task-log file name in a month before the current month.
@@ -311,7 +331,7 @@ fn check_rejects_missing_task_execution_files_and_runners() {
     let task_yaml = home.join("tasks/smoke-task/task.yaml");
     let text = std::fs::read_to_string(&task_yaml)
         .expect("read task yaml")
-        .replace("runner: gpt-5.3-codex-spark", "runner: missing-runner");
+        .replace("  - gpt-5.3-codex-spark", "  - missing-runner");
     std::fs::write(&task_yaml, text).expect("write task yaml");
 
     let missing_runner = run_tinybutler(home, &["check"]);
@@ -324,6 +344,166 @@ fn check_rejects_missing_task_execution_files_and_runners() {
         "stderr should mention missing runner: {}",
         stderr(&missing_runner)
     );
+}
+
+#[test]
+fn restart_checks_config_and_tasks_before_signaling_daemon() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let task_yaml = home.join("tasks/regular-check/task.yaml");
+    let mut text = std::fs::read_to_string(&task_yaml).expect("read task yaml");
+    text.push_str("workspace: /tmp\n");
+    std::fs::write(&task_yaml, text).expect("write invalid task yaml");
+
+    let output = run_tinybutler(home, &["restart"]);
+
+    assert!(
+        !output.status.success(),
+        "restart should fail invalid check"
+    );
+    assert!(
+        stderr(&output).contains("workspace"),
+        "stderr should explain check failure: {}",
+        stderr(&output)
+    );
+    assert!(
+        !stderr(&output).contains("failed to read"),
+        "restart should not read or signal daemon pid after failed check: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn restart_execs_running_daemon_without_systemctl_restart() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let mut daemon = Command::new(tinybutler_bin())
+        .arg("--home")
+        .arg(home)
+        .args(["daemon", "--interval-seconds", "60"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start daemon");
+
+    let pid_path = home.join("tinybutler.pid");
+    let first = wait_for_pid_record(&pid_path);
+
+    let output = run_tinybutler(home, &["restart"]);
+    if !output.status.success() {
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+    }
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("Restarted TinyButler daemon"),
+        "stdout should report completed restart: {}",
+        stdout(&output)
+    );
+
+    let second = wait_for_pid_record(&pid_path);
+    assert_eq!(
+        second.pid, first.pid,
+        "restart should exec the same daemon pid"
+    );
+    assert_ne!(
+        second.launched_at_unix_nanos, first.launched_at_unix_nanos,
+        "daemon should rewrite pid metadata after exec"
+    );
+    assert!(
+        daemon.try_wait().expect("daemon status").is_none(),
+        "daemon should still be running after in-place restart"
+    );
+
+    daemon.kill().expect("stop daemon");
+    let _ = daemon.wait();
+}
+
+#[test]
+fn agent_task_tries_agents_in_order_until_one_succeeds() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+    std::fs::remove_dir_all(home.join("tasks/smoke-task")).expect("remove template agent task");
+
+    std::fs::write(
+        home.join("config.yaml"),
+        r#"telegram:
+  bot_token: null
+  chat_id: null
+
+code_agents:
+  fail-agent:
+    command: /bin/sh
+    args:
+      - "-c"
+      - |
+        printf 'first stdout\n'
+        printf 'first stderr\n' >&2
+        exit 7
+  success-agent:
+    command: /bin/sh
+    args:
+      - "-c"
+      - |
+        cat >/dev/null
+        printf '{"session_id":"session-ok"}\n'
+"#,
+    )
+    .expect("write config");
+
+    let task_dir = home.join("tasks/fallback-task");
+    std::fs::create_dir_all(&task_dir).expect("task dir");
+    std::fs::write(
+        task_dir.join("task.yaml"),
+        r#"name: fallback-task
+enabled: false
+schedule: "0 9 * * *"
+agents:
+  - fail-agent
+  - success-agent
+type: agent
+session: independent
+timeout: 30
+"#,
+    )
+    .expect("write task yaml");
+    std::fs::write(task_dir.join("agent.md"), "Run the fallback test.\n").expect("agent md");
+
+    let check = run_tinybutler(home, &["check"]);
+    assert!(check.status.success(), "{}", stderr(&check));
+
+    let list = run_tinybutler(home, &["task", "list"]);
+    assert!(list.status.success(), "{}", stderr(&list));
+    assert!(stdout(&list).contains("agents: fail-agent -> success-agent"));
+
+    let run = run_tinybutler_with_input(home, &["tasks"], "fallback-task\nrun\n");
+    assert!(run.status.success(), "{}", stderr(&run));
+
+    let state: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(task_dir.join("state.json")).expect("read state"),
+    )
+    .expect("parse state");
+    assert_eq!(state["last_status"], "success");
+    assert_eq!(state["session_id"], "session-ok");
+    assert_eq!(state["session_runner"], "success-agent");
+    assert_eq!(state["failure_count"], 0);
+
+    let latest_log = state["last_log"].as_str().expect("last log");
+    let log = std::fs::read_to_string(task_dir.join(latest_log)).expect("read latest log");
+    assert!(log.contains("--- agent fail-agent stdout ---"));
+    assert!(log.contains("--- agent fail-agent stderr exit_code=Some(7) ---"));
+    assert!(log.contains("--- agent success-agent stdout ---"));
 }
 
 #[test]
@@ -404,7 +584,7 @@ fn task_list_uses_chat_readable_multiline_blocks() {
     let out = stdout(&list);
 
     assert!(out.contains("regular-check\n  enabled: true"));
-    assert!(out.contains("\n  runner: shell\n"));
+    assert!(out.contains("\n  agents: shell\n"));
     assert!(out.contains("schedule: At every 10 minutes. (*/10 * * * *)"));
     assert!(out.contains("\n  next_run_at: "));
     assert!(

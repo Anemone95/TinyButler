@@ -26,6 +26,8 @@ TinyButler stores local configuration and runtime files under `~/.tinybutler/` b
 
 `templates/config.yaml` is the repository example. It must stay usable without real secrets.
 
+The running daemon reads `config.yaml` at startup. Use `tinybutler restart` after editing local config or task files; it validates config and tasks first, then signals the running daemon to re-exec itself in place without calling `systemctl restart`.
+
 ## Telegram Config
 
 TinyButler reads Telegram secrets from local `~/.tinybutler/config.yaml`.
@@ -78,7 +80,7 @@ The default templates use Codex `danger-full-access` and Gemini `--approval-mode
 
 ## Session State
 
-For agent task runners, `session: reuse` stores the latest successful session id in the task `state.json`.
+For agent task runners, `session: reuse` stores the latest successful session id and the runner key that produced it in the task `state.json`. Reuse only applies when the stored session belongs to the runner currently being attempted.
 
 Interactive chat sessions store their runtime metadata in chat bridge state, not in task `state.json`.
 

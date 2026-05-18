@@ -39,10 +39,16 @@ Validate `~/.tinybutler/config.yaml` and all task definitions under
 
 ```bash
 tinybutler daemon
+tinybutler restart
 ```
 
 Start the scheduler loop. When Telegram is configured, the daemon also starts
 the Telegram long-polling command loop.
+
+Use `tinybutler restart` after editing `~/.tinybutler/config.yaml` or task
+definitions. The command validates config and scheduled tasks first, then
+signals the running daemon to re-exec itself in place without calling
+`systemctl restart`.
 
 ```bash
 tinybutler tasks
@@ -55,7 +61,7 @@ keyboard, inspect its `task.yaml` plus `agent.md` or `run.sh`, then choose
 `status`, `run`, `enable`, `disable`, or `exit`.
 
 Use `tinybutler task list` in scripts and agent workflows to print all tasks
-with enabled state, type, runner, schedule description, latest state, next run
+with enabled state, type, agents, schedule description, latest state, next run
 time, and counters. Use `tinybutler task status <task>` to print task details,
 `state.json`, and the latest-log preview.
 
@@ -314,7 +320,7 @@ set -euo pipefail
 printf '**regular-check ok:** `%s`\n' "$(date --iso-8601=seconds)"
 ```
 
-Command tasks must not define `runner`. Write stdout as Markdown text because
+Command tasks must not define `agents`. Write stdout as Markdown text because
 TinyButler may use non-empty stdout directly as the Telegram task summary.
 
 ## Agent Task Template
@@ -331,7 +337,8 @@ Directory:
 name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
-runner: gpt-5.3-codex-spark
+agents:
+  - gpt-5.3-codex-spark
 type: agent
 session: independent
 timeout: 3600
@@ -347,8 +354,10 @@ Use `tinybutler telegram "..."` only when the result is useful to send.
 
 Agent task fields:
 
-- `runner`: required key under `code_agents.<runner>` in
-  `~/.tinybutler/config.yaml`.
+- `agents`: required ordered list of code-agent runner keys under
+  `code_agents.<runner>` in `~/.tinybutler/config.yaml`. Use a one-element list
+  for a single code-agent runner. TinyButler tries each runner in order and
+  reports task failure only after the final agent fails.
 - `session`: `independent` starts a new agent session every run. `reuse`
   resumes the previous successful session when the runner supports resume.
 

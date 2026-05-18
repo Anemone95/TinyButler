@@ -33,8 +33,8 @@ timeout: 1800
     .expect("minimal shell task should parse");
 
     assert_eq!(task.name, "regular-check");
-    assert_eq!(task.runner, None);
-    assert_eq!(task.runner_label(), "shell");
+    assert!(task.agents.is_empty());
+    assert_eq!(task.agents_label(), "shell");
     assert_eq!(task.task_type, TaskType::Command);
 }
 
@@ -54,17 +54,31 @@ timeout: 60
 }
 
 #[test]
-fn rejects_command_task_with_runner() {
+fn rejects_removed_runner_and_agent_fields() {
+    for field in ["runner: gpt-5.5", "agent: gpt-5.5"] {
+        let yaml = format!(
+            "name: smoke-task\nenabled: false\nschedule: \"0 9 * * *\"\n{field}\ntype: agent\ntimeout: 3600\n"
+        );
+        assert!(
+            parse_task(&yaml).is_err(),
+            "task.yaml should reject removed field: {field}"
+        );
+    }
+}
+
+#[test]
+fn rejects_command_task_with_agents() {
     let task = parse_task(
         r#"name: regular-check
 enabled: true
 schedule: "*/10 * * * *"
-runner: shell
+agents:
+  - gpt-5.5
 type: command
 timeout: 1800
 "#,
     )
-    .expect("runner is parsed before command validation rejects it");
+    .expect("agents are parsed before command validation rejects them");
 
     assert!(task.validate().is_err());
 }
@@ -74,7 +88,8 @@ fn rejects_runner_specific_codex_block() {
     let yaml_with_codex_block = r#"name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
-runner: codex
+agents:
+  - codex
 type: agent
 timeout: 3600
 
@@ -94,7 +109,8 @@ fn parses_gpt55_task_without_task_local_runner_config() {
         r#"name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
-runner: gpt-5.5
+agents:
+  - gpt-5.5
 type: agent
 timeout: 3600
 "#,
@@ -102,29 +118,90 @@ timeout: 3600
     .expect("code-agent task should not need task-local runner config");
 
     assert!(task.validate().is_ok());
-    assert_eq!(task.runner.as_deref(), Some("gpt-5.5"));
+    assert_eq!(task.agent_runner_keys(), vec!["gpt-5.5"]);
     assert_eq!(task.task_type, TaskType::Agent);
 }
 
 #[test]
-fn parses_agent_task_with_configured_runner_key() {
+fn parses_agent_task_with_single_agent_list() {
+    let task = parse_task(
+        r#"name: smoke-task
+enabled: false
+schedule: "0 9 * * *"
+agents:
+  - gpt-5.5
+type: agent
+timeout: 3600
+"#,
+    )
+    .expect("single-item agents list should parse");
+
+    assert!(task.validate().is_ok());
+    assert_eq!(task.agent_runner_keys(), vec!["gpt-5.5"]);
+    assert_eq!(task.agents_label(), "gpt-5.5");
+}
+
+#[test]
+fn parses_agent_task_with_agent_fallback_list() {
+    let task = parse_task(
+        r#"name: fallback-task
+enabled: false
+schedule: "0 9 * * *"
+agents:
+  - gemini-3.1-flash-lite
+  - gpt-5.3-codex-spark
+type: agent
+timeout: 3600
+"#,
+    )
+    .expect("agents list should parse");
+
+    assert!(task.validate().is_ok());
+    assert_eq!(
+        task.agent_runner_keys(),
+        vec!["gemini-3.1-flash-lite", "gpt-5.3-codex-spark"]
+    );
+    assert_eq!(
+        task.agents_label(),
+        "gemini-3.1-flash-lite -> gpt-5.3-codex-spark"
+    );
+}
+
+#[test]
+fn rejects_empty_agent_list() {
+    let task = parse_task(
+        r#"name: fallback-task
+enabled: false
+schedule: "0 9 * * *"
+agents: []
+type: agent
+timeout: 3600
+"#,
+    )
+    .expect("empty agents list is parsed before validation rejects it");
+
+    assert!(task.validate().is_err());
+}
+
+#[test]
+fn rejects_shell_in_agent_list() {
     let task = parse_task(
         r#"name: spark-task
 enabled: false
 schedule: "0 10 * * *"
-runner: gpt-5.3-codex-spark
+agents:
+  - shell
 type: agent
 timeout: 1800
 "#,
     )
-    .expect("agent task should accept any non-shell runner key");
+    .expect("agents list is parsed before validation rejects shell");
 
-    assert!(task.validate().is_ok());
-    assert_eq!(task.runner.as_deref(), Some("gpt-5.3-codex-spark"));
+    assert!(task.validate().is_err());
 }
 
 #[test]
-fn rejects_agent_task_without_runner() {
+fn rejects_agent_task_without_agents() {
     let task = parse_task(
         r#"name: smoke-task
 enabled: false
@@ -133,7 +210,7 @@ type: agent
 timeout: 3600
 "#,
     )
-    .expect("missing runner is checked during validation");
+    .expect("missing agents is checked during validation");
 
     assert!(task.validate().is_err());
 }

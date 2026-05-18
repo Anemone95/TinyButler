@@ -27,6 +27,9 @@ pub struct TaskState {
     /// Stored agent session id for `session: reuse`.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Runner key that produced the stored agent session id.
+    #[serde(default)]
+    pub session_runner: Option<String>,
     /// Normalized cron expression used to compute `next_run_at`.
     #[serde(default)]
     pub schedule_expr: Option<String>,

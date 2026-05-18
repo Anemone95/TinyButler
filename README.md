@@ -64,13 +64,14 @@ Agent task:
 name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
-runner: gpt-5.3-codex-spark
+agents:
+  - gpt-5.3-codex-spark
 type: agent
 session: independent
 timeout: 3600
 ```
 
-For agent tasks, `runner` is a key in local `~/.tinybutler/config.yaml` under `code_agents`. The default templates include `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`.
+For agent tasks, `agents` is the required ordered list of local `~/.tinybutler/config.yaml` keys under `code_agents`. Use a one-element list for a single code-agent runner. TinyButler only reports the task as failed after the final agent fails. The default templates include `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`.
 
 Shell task:
 
@@ -90,6 +91,7 @@ Every task runs inside its own task directory, `~/.tinybutler/tasks/<task-name>/
 tinybutler init
 tinybutler daemon
 tinybutler check
+tinybutler restart
 tinybutler telegram '<message>'
 tinybutler telegram --attachment <path> --caption '<message>'
 tinybutler telegram --task <task> '<message>'
@@ -100,7 +102,7 @@ tinybutler chat new
 tinybutler chat session
 ```
 
-`tinybutler check` validates local config and task definitions. `tinybutler tasks` opens the task selector, where you can inspect task details, run a task once, view state and latest-log previews, and enable or disable the selected task. `tinybutler task list` and `tinybutler task status <task>` are read-only, script-friendly inspection commands for agents and shell workflows.
+`tinybutler check` validates local config and task definitions. `tinybutler restart` runs the same validation first, then signals the running daemon to re-exec itself in place without calling `systemctl restart`. `tinybutler tasks` opens the task selector, where you can inspect task details, run a task once, view state and latest-log previews, and enable or disable the selected task. `tinybutler task list` and `tinybutler task status <task>` are read-only, script-friendly inspection commands for agents and shell workflows.
 
 `tinybutler chat new` starts a local REPL for an interactive Codex chat session. `tinybutler chat session` resumes a previous session. Use `/exit` to detach and Ctrl+C to abort an active turn. Local REPL sessions tell the agent to print local artifact paths; Telegram sessions tell the agent it is behind the Telegram bridge and can use Telegram attachment delivery.
 

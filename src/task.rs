@@ -24,11 +24,12 @@ pub struct Task {
     pub enabled: bool,
     /// Local-time cron expression. Five-field expressions get seconds added.
     pub schedule: String,
-    /// Agent execution backend key mapping to `code_agents.<runner>`.
+    /// Ordered fallback agent backend keys for `type: agent` tasks.
     ///
-    /// Command tasks must omit this field because they always use shell.
+    /// TinyButler tries these in order and reports task failure only after the
+    /// final configured agent fails.
     #[serde(default)]
-    pub runner: Option<String>,
+    pub agents: Vec<String>,
     /// Task file shape, either `agent.md` or `run.sh`.
     #[serde(rename = "type")]
     pub task_type: TaskType,
@@ -93,28 +94,43 @@ impl Task {
             .with_context(|| format!("invalid schedule for task {}", self.name))?;
         match self.task_type {
             TaskType::Agent => {
-                let Some(runner) = self.runner.as_deref() else {
-                    bail!("agent task {} requires runner", self.name);
-                };
-                if runner.trim().is_empty() || runner == "shell" {
-                    bail!("agent task {} requires a code-agent runner", self.name);
+                let runners = self.agent_runner_keys();
+                if runners.is_empty() {
+                    bail!("agent task {} requires agents", self.name);
+                }
+                for runner in runners {
+                    if runner.trim().is_empty() || runner == "shell" {
+                        bail!("agent task {} requires code-agent runners", self.name);
+                    }
                 }
             }
             TaskType::Command => {
-                if self.runner.is_some() {
-                    bail!("command task {} must not define runner", self.name);
+                if !self.agents.is_empty() {
+                    bail!("command task {} must not define agents", self.name);
                 }
             }
         }
         Ok(())
     }
 
-    /// Return the effective runner label for display and execution.
-    pub fn runner_label(&self) -> &str {
+    /// Return the effective agent runner label for display and execution.
+    pub fn agents_label(&self) -> String {
         match self.task_type {
-            TaskType::Command => "shell",
-            TaskType::Agent => self.runner.as_deref().unwrap_or("-"),
+            TaskType::Command => "shell".to_string(),
+            TaskType::Agent => {
+                let runners = self.agent_runner_keys();
+                if runners.is_empty() {
+                    "-".to_string()
+                } else {
+                    runners.join(" -> ")
+                }
+            }
         }
+    }
+
+    /// Return the ordered code-agent runner keys for an agent task.
+    pub fn agent_runner_keys(&self) -> Vec<&str> {
+        self.agents.iter().map(String::as_str).collect()
     }
 
     /// Return the daemon-owned state file for this task.

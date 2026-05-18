@@ -3,15 +3,20 @@
 //! The scheduler owns the daemon loop, task lock handling, state updates, and
 //! the CLI-facing `check` and `tasks` command behavior.
 
+use std::ffi::OsString;
+use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Local, Utc};
 use tokio::fs;
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-use crate::config::Config;
+use crate::config::{write_daemon_pid_record, Config};
 use crate::cron_expr::next_run_after as cron_next_run_after;
 pub use crate::cron_expr::{describe_schedule, format_schedule_for_display, normalize_cron};
 use crate::lock::TaskLock;
@@ -32,19 +37,41 @@ impl Scheduler {
         Self { config }
     }
 
-    /// Run the daemon loop until Ctrl-C.
+    /// Run the daemon loop until Ctrl-C, SIGTERM, or an in-place restart signal.
     pub async fn run_loop(&self, interval: Duration) -> Result<()> {
         fs::create_dir_all(self.config.tasks_dir()).await?;
         info!(
             "TinyButler daemon started with home {}",
             self.config.home.display()
         );
+        let mut terminate =
+            signal(SignalKind::terminate()).context("failed to listen for SIGTERM")?;
+        let mut restart =
+            signal(SignalKind::user_defined2()).context("failed to listen for SIGUSR2")?;
+        let _pid_file =
+            DaemonPidFile::write(self.config.daemon_pid_path(), self.config.home.clone()).await?;
         self.maintain_all_task_logs().await?;
         self.reconcile_startup_schedules().await?;
 
         loop {
-            if let Err(err) = self.tick().await {
-                error!("scheduler tick failed: {err:#}");
+            tokio::select! {
+                tick_result = self.tick() => {
+                    if let Err(err) = tick_result {
+                        error!("scheduler tick failed: {err:#}");
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    info!("TinyButler daemon stopped");
+                    return Ok(());
+                }
+                _ = terminate.recv() => {
+                    info!("TinyButler daemon received SIGTERM");
+                    return Ok(());
+                }
+                _ = restart.recv() => {
+                    info!("TinyButler daemon received restart signal");
+                    return exec_current_daemon();
+                }
             }
 
             tokio::select! {
@@ -52,6 +79,14 @@ impl Scheduler {
                 _ = tokio::signal::ctrl_c() => {
                     info!("TinyButler daemon stopped");
                     return Ok(());
+                }
+                _ = terminate.recv() => {
+                    info!("TinyButler daemon received SIGTERM");
+                    return Ok(());
+                }
+                _ = restart.recv() => {
+                    info!("TinyButler daemon received restart signal");
+                    return exec_current_daemon();
                 }
             }
         }
@@ -115,16 +150,14 @@ impl Scheduler {
                 if fs::metadata(&prompt).await.is_err() {
                     bail!("agent task {} requires {}", task.name, prompt.display());
                 }
-                let runner = task
-                    .runner
-                    .as_deref()
-                    .context("agent task requires runner")?;
-                if !self.config.code_agents.contains_key(runner) {
-                    bail!(
-                        "agent task {} references missing code_agents.{} in config.yaml",
-                        task.name,
-                        runner
-                    );
+                for runner in task.agent_runner_keys() {
+                    if !self.config.code_agents.contains_key(runner) {
+                        bail!(
+                            "agent task {} references missing code_agents.{} in config.yaml",
+                            task.name,
+                            runner
+                        );
+                    }
                 }
             }
         }
@@ -152,11 +185,11 @@ impl Scheduler {
                 output.push_str("\n\n");
             }
             output.push_str(&format!(
-                "{name}\n  enabled: {enabled}\n  type: {task_type:?}\n  runner: {runner}\n  schedule: {schedule}\n  last_status: {last_status}\n  last_run_at: {last_run_at}\n  next_run_at: {next_run_at}\n  run_count: {run_count}\n  failure_count: {failure_count}\n  running: {running}",
+                "{name}\n  enabled: {enabled}\n  type: {task_type:?}\n  agents: {agents}\n  schedule: {schedule}\n  last_status: {last_status}\n  last_run_at: {last_run_at}\n  next_run_at: {next_run_at}\n  run_count: {run_count}\n  failure_count: {failure_count}\n  running: {running}",
                 name = task.name,
                 enabled = task.enabled,
                 task_type = task.task_type,
-                runner = task.runner_label(),
+                agents = task.agents_label(),
                 schedule = format_schedule_for_display(&task.schedule),
                 last_status = state.last_status.as_deref().unwrap_or("-"),
                 last_run_at = state.last_run_at.as_deref().unwrap_or("-"),
@@ -195,11 +228,11 @@ impl Scheduler {
     pub async fn task_detail_text(&self, name: &str) -> Result<String> {
         let task = self.find_task(name).await?;
         Ok(format!(
-            "**Task:** `{}`\n\n**enabled:** `{}`\n**type:** `{:?}`\n**runner:** `{}`\n**schedule:** {}\n**timeout:** `{}s`\n**session:** `{:?}`",
+            "**Task:** `{}`\n\n**enabled:** `{}`\n**type:** `{:?}`\n**agents:** `{}`\n**schedule:** {}\n**timeout:** `{}s`\n**session:** `{:?}`",
             task.name,
             task.enabled,
             task.task_type,
-            task.runner_label(),
+            task.agents_label(),
             format_schedule_for_display(&task.schedule),
             task.timeout,
             task.session,
@@ -249,7 +282,7 @@ impl Scheduler {
         let task = self.find_task(name).await?;
         let state = TaskState::load(&task.state_path()).await?;
         let mut output = format!(
-            "**Task status:** `{}`\n\n**last_status:** `{}`\n**last_exit_code:** `{}`\n**last_run_at:** `{}`\n**next_run_at:** `{}`\n**running:** `{}`\n**run_count:** `{}`\n**failure_count:** `{}`\n**session_id:** `{}`\n**schedule_expr:** `{}`\n**last_log:** `{}`",
+            "**Task status:** `{}`\n\n**last_status:** `{}`\n**last_exit_code:** `{}`\n**last_run_at:** `{}`\n**next_run_at:** `{}`\n**running:** `{}`\n**run_count:** `{}`\n**failure_count:** `{}`\n**session_id:** `{}`\n**session_runner:** `{}`\n**schedule_expr:** `{}`\n**last_log:** `{}`",
             task.name,
             state.last_status.as_deref().unwrap_or("-"),
             state
@@ -262,6 +295,7 @@ impl Scheduler {
             state.run_count,
             state.failure_count,
             state.session_id.as_deref().unwrap_or("-"),
+            state.session_runner.as_deref().unwrap_or("-"),
             state.schedule_expr.as_deref().unwrap_or("-"),
             state.last_log.as_deref().unwrap_or("-"),
         );
@@ -355,6 +389,7 @@ impl Scheduler {
         state.last_log = Some(outcome.log_relative_path.clone());
         if outcome.session_id.is_some() {
             state.session_id = outcome.session_id.clone();
+            state.session_runner = outcome.agent_runner.clone();
         }
         state.run_count += 1;
         if outcome.status != "success" {
@@ -515,6 +550,35 @@ impl Scheduler {
         tasks.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(tasks)
     }
+}
+
+struct DaemonPidFile {
+    path: PathBuf,
+}
+
+impl DaemonPidFile {
+    async fn write(path: PathBuf, home: PathBuf) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        write_daemon_pid_record(&path, &home).await?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for DaemonPidFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn exec_current_daemon() -> Result<()> {
+    let exe = std::env::current_exe().context("failed to resolve current TinyButler executable")?;
+    let args = std::env::args_os().skip(1).collect::<Vec<OsString>>();
+    let err = Command::new(exe).args(args).exec();
+    Err(err).context("failed to exec restarted TinyButler daemon")
 }
 
 /// Update or insert the top-level `enabled:` field in a task YAML document.

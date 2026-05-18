@@ -60,13 +60,14 @@ timeout: 1800
 
 ## Agent Tasks
 
-Agent tasks use `type: agent`, read `agent.md` as the task-owned prompt, prepend TinyButler runtime context, and require a configured runner.
+Agent tasks use `type: agent`, read `agent.md` as the task-owned prompt, prepend TinyButler runtime context, and require an ordered `agents` list. Use a one-element list for a single code-agent runner.
 
 ```yaml
 name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
-runner: gpt-5.3-codex-spark
+agents:
+  - gpt-5.3-codex-spark
 type: agent
 session: independent
 timeout: 3600
@@ -74,7 +75,7 @@ timeout: 3600
 
 Agent task fields:
 
-- `runner`: a key under `code_agents.<runner>` in `~/.tinybutler/config.yaml`.
+- `agents`: a required ordered list of code-agent runner keys under `code_agents.<runner>` in `~/.tinybutler/config.yaml`. TinyButler tries them in order and records task failure only after the final agent fails.
 - `session`: `independent` starts a fresh session; `reuse` resumes the previous successful session when the runner supports it.
 
 Agent runner configuration, session placeholders, and sandbox/model flags are owned by [configuration.md](configuration.md).
@@ -93,7 +94,7 @@ Task behavior starts from local CLI commands. TinyButler provides a task selecto
 
 `/tasks` shows the same task list as Telegram buttons. Selecting a task opens the task detail view.
 
-After a task is selected, TinyButler first shows task details formatted as Markdown from the parsed task definition, including name, enabled state, type, runner, schedule, timeout, and session mode. It must not show raw task definition, prompt, or script file contents in the Telegram task menu.
+After a task is selected, TinyButler first shows task details formatted as Markdown from the parsed task definition, including name, enabled state, type, agents, schedule, timeout, and session mode. It must not show raw task definition, prompt, or script file contents in the Telegram task menu.
 
 The selected-task view then offers these actions:
 
@@ -112,9 +113,13 @@ Each scheduler tick re-scans `tasks/*/task.yaml` before due checks. The default 
 
 Adding, removing, or editing task directories while the daemon is running is picked up on the next tick.
 
+Use `tinybutler restart` after editing local config or when you want a clean service restart. It first validates config, task schemas, task-owned execution files, and agent runner references. If validation succeeds, it signals the running daemon to re-exec itself in place without calling `systemctl restart`. If validation fails, it reports the error and does not signal the daemon.
+
 CLI commands such as `tinybutler check`, `tinybutler tasks`, `tinybutler task list`, and `tinybutler task status <task>` read the relevant files directly when invoked.
 
 On each scheduler tick, the daemon validates task schema, decides whether a task is due, locks the task directory, runs `agent.md` or `run.sh`, writes stdout and stderr to `logs/`, updates `state.json`, and sends Telegram notification when notification rules require it.
+
+For agent tasks with `agents`, the daemon tries each configured runner in list order. A non-zero exit status, spawn failure, timeout, or missing runtime config for one runner moves execution to the next runner. All attempts are written into the same run log. A successful fallback attempt makes the whole task run successful, so the daemon does not send its failure Telegram notification unless every configured agent fails.
 
 Task runner processes receive `TINYBUTLER_TASK_NAME` in their environment. Shell scripts and agent tasks that send their own Telegram messages should pass this through with `tinybutler telegram --task "$TINYBUTLER_TASK_NAME" ...` so the outgoing message carries task context for later Telegram replies and debugging.
 
@@ -155,7 +160,7 @@ DST behavior follows `croner` and the local timezone. `next_run_at` is stored as
 Task notification rules define when the daemon should notify. Markdown conversion, attachment delivery, chunking, and Telegram send methods are owned by [markdown-message.md](markdown-message.md).
 
 - Agent task success: the daemon does not auto-notify. The agent may call `tinybutler telegram --task "$TINYBUTLER_TASK_NAME" ...` itself when a notification is useful.
-- Agent task failure, timeout, or lock conflict: the daemon sends a fallback Telegram notification.
+- Agent task failure, timeout, or lock conflict: the daemon sends a fallback Telegram notification. For `agents` fallback lists, this happens only after the final agent fails.
 - Shell task success with non-empty stdout: the daemon sends a Telegram notification with a stdout summary.
 - Shell task success with empty stdout: the daemon sends no Telegram notification.
 - Shell task failure: the daemon sends a Telegram notification even when stdout is empty, using failure, stderr, and log summary.

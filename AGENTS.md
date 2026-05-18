@@ -38,6 +38,7 @@ TinyButler daemon / agent CLI / Telegram-bridged agent CLI
 tinybutler init                                # create ~/.tinybutler with config and example tasks
 tinybutler daemon                              # start the scheduler loop and Telegram ingress when configured
 tinybutler check                               # validate TinyButler-controlled config and task files
+tinybutler restart                            # validate config and task files, then signal the daemon to restart
 tinybutler telegram '<message>'                # send a Telegram Markdown-authored message
 tinybutler telegram --attachment <path>        # send a Telegram attachment with an optional caption
 
