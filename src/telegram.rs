@@ -159,10 +159,16 @@ pub async fn poll(config: Config) -> Result<()> {
                         for update in updates {
                             let update_id = update.update_id;
                             let mut update_handled = update.message.is_none() && update.callback_query.is_none();
+                            let mut update_recorded_before_handling = false;
                             if let Some(message) = update.message {
                                 if message.chat.id.to_string() != allowed_chat_id {
                                     update_handled = true;
                                 } else if message.text.is_some() {
+                                    if should_record_update_before_handling(message.text.as_deref()) {
+                                        poll_state.record_update(update_id);
+                                        poll_state.save(&state_path).await?;
+                                        update_recorded_before_handling = true;
+                                    }
                                     if let Err(err) = handle_message(&config, abort_sender.clone(), &message).await {
                                         warn!("failed to handle Telegram command: {err:#}");
                                         let _ = send_markdown_text_to_chat(
@@ -187,7 +193,7 @@ pub async fn poll(config: Config) -> Result<()> {
                                     update_handled = true;
                                 }
                             }
-                            if update_handled {
+                            if update_handled && !update_recorded_before_handling {
                                 poll_state.record_update(update_id);
                                 poll_state.save(&state_path).await?;
                             }
@@ -203,6 +209,13 @@ pub async fn poll(config: Config) -> Result<()> {
             }
         }
     }
+}
+
+fn should_record_update_before_handling(text: Option<&str>) -> bool {
+    matches!(
+        text.map(parse_ingress_command),
+        Some(IngressCommand::Restart)
+    )
 }
 
 /// Parse Telegram text into a TinyButler ingress command.
@@ -2069,6 +2082,17 @@ mod tests {
             assert!(!command.description.contains("tinybulter"));
             assert!(command.description.len() <= 16);
         }
+    }
+
+    #[test]
+    fn restart_command_records_update_before_signaling() {
+        assert!(should_record_update_before_handling(Some("/restart")));
+        assert!(should_record_update_before_handling(Some(
+            "/restart@OpenClawBot"
+        )));
+        assert!(!should_record_update_before_handling(Some("/tasks")));
+        assert!(!should_record_update_before_handling(Some("restart")));
+        assert!(!should_record_update_before_handling(None));
     }
 
     #[test]
