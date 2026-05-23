@@ -1,6 +1,6 @@
 # TinyButler
 
-TinyButler is a small file-managed scheduler for shell tasks and coding-agent tasks.
+TinyButler is a simple personal assistant that mainly for creating and running schedule tasks.
 
 ## Overview
 

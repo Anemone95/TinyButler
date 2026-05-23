@@ -6,14 +6,20 @@ Keep this file as the repository entry point: project invariants, the documentat
 
 ## Project Goal
 
-TinyButler is a file-managed scheduler for agent tasks. It should stay small, inspectable, and easy to manage over code-agent CLIs such as Codex, Claude, Gemini, or a Telegram-bridged code-agent CLI.
+TinyButler is a small personal assistant for creating and running scheduled tasks.
+
+Unlike heavier automation systems, TinyButler does not maintain its own memory or model-serving layer. It delegates that work to code-agent CLIs such as Codex, Claude, and Gemini. TinyButler's job is to ask those tools to create task files, then run those tasks on schedule.
+
+The result is an automation layer that can use modern code agents while still running on a headless Linux server with very small resource requirements. Different tasks can use different model providers, and tasks can also be plain Bash commands that do not call any model at all.
 
 Core principles:
 
 - Tasks are files under `~/.tinybutler/tasks/`.
+- TinyButler uses code agents through their CLI tools, not through provider APIs.
+- TinyButler does not provide a web UI or heavy interactive interface; it ships project skills so users use code agents to operate it.
 - TinyButler uses its own daemon loop for local-time schedules parsed by the Rust `croner` crate, instead of relying on system cron.
 - Runtime state is stored beside the feature it belongs to, not in a central database.
-- The local CLI is the primary command surface.
+- The local CLI is the primary command surface, with Telegram bridge commands as the remote command surface.
 - Telegram command behavior must be explainable through the local CLI first.
 - Project skills teach code agents how to operate an installed TinyButler instance.
 
