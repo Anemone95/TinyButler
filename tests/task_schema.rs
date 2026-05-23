@@ -73,7 +73,7 @@ fn rejects_command_task_with_agents() {
 enabled: true
 schedule: "*/10 * * * *"
 agents:
-  - gpt-5.5
+  - codex/gpt-5.5
 type: command
 timeout: 1800
 "#,
@@ -104,13 +104,13 @@ codex:
 }
 
 #[test]
-fn parses_gpt55_task_without_task_local_runner_config() {
+fn parses_gpt55_grouped_task_without_task_local_runner_config() {
     let task = parse_task(
         r#"name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
 agents:
-  - gpt-5.5
+  - codex/gpt-5.5
 type: agent
 timeout: 3600
 "#,
@@ -118,7 +118,7 @@ timeout: 3600
     .expect("code-agent task should not need task-local runner config");
 
     assert!(task.validate().is_ok());
-    assert_eq!(task.agent_runner_keys(), vec!["gpt-5.5"]);
+    assert_eq!(task.agent_runner_keys(), vec!["codex/gpt-5.5"]);
     assert_eq!(task.task_type, TaskType::Agent);
 }
 
@@ -129,7 +129,7 @@ fn parses_agent_task_with_single_agent_list() {
 enabled: false
 schedule: "0 9 * * *"
 agents:
-  - gpt-5.5
+  - codex/gpt-5.5
 type: agent
 timeout: 3600
 "#,
@@ -137,8 +137,8 @@ timeout: 3600
     .expect("single-item agents list should parse");
 
     assert!(task.validate().is_ok());
-    assert_eq!(task.agent_runner_keys(), vec!["gpt-5.5"]);
-    assert_eq!(task.agents_label(), "gpt-5.5");
+    assert_eq!(task.agent_runner_keys(), vec!["codex/gpt-5.5"]);
+    assert_eq!(task.agents_label(), "codex/gpt-5.5");
 }
 
 #[test]
@@ -148,8 +148,8 @@ fn parses_agent_task_with_agent_fallback_list() {
 enabled: false
 schedule: "0 9 * * *"
 agents:
-  - gemini-3.1-flash-lite
-  - gpt-5.3-codex-spark
+  - gemini/gemini-3.1-flash-lite
+  - codex/gpt-5.3-codex-spark
 type: agent
 timeout: 3600
 "#,
@@ -159,11 +159,11 @@ timeout: 3600
     assert!(task.validate().is_ok());
     assert_eq!(
         task.agent_runner_keys(),
-        vec!["gemini-3.1-flash-lite", "gpt-5.3-codex-spark"]
+        vec!["gemini/gemini-3.1-flash-lite", "codex/gpt-5.3-codex-spark"]
     );
     assert_eq!(
         task.agents_label(),
-        "gemini-3.1-flash-lite -> gpt-5.3-codex-spark"
+        "gemini/gemini-3.1-flash-lite -> codex/gpt-5.3-codex-spark"
     );
 }
 

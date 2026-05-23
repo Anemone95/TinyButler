@@ -65,13 +65,13 @@ name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
 agents:
-  - gpt-5.3-codex-spark
+  - codex/gpt-5.3-codex-spark
 type: agent
 session: independent
 timeout: 3600
 ```
 
-For agent tasks, `agents` is the required ordered list of model names from local `~/.tinybutler/config.yaml` under `code_agents.<group>.models`. Use a one-element list for a single model. TinyButler only reports the task as failed after the final model fails. The default templates group models under `gemini` and `codex`, including `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`.
+For agent tasks, `agents` is the required ordered list of `group/model` references from local `~/.tinybutler/config.yaml` under `code_agents.<group>.models`. Use a one-element list for a single model. TinyButler only reports the task as failed after the final model fails. The default templates group models under `gemini` and `codex`, including `gemini/gemini-3.1-flash-lite`, `codex/gpt-5.3-codex-spark`, and `codex/gpt-5.5`.
 
 Shell task:
 

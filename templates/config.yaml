@@ -55,22 +55,20 @@ code_agents:
       - "-c"
       - service_tier="fast"
       - "--skip-git-repo-check"
-      - "-"
-      - stdin
+      - "{prompt}"
     resume_args:
       - exec
       - resume
       - "--json"
-      - "{sessionId}"
-      - "-c"
-      - sandbox_mode="danger-full-access"
       - "-m"
       - "{model}"
       - "-c"
+      - sandbox_mode="danger-full-access"
+      - "-c"
       - service_tier="fast"
       - "--skip-git-repo-check"
-      - "-"
-      - stdin
+      - "{sessionId}"
+      - "{prompt}"
     stream_args:
       - app-server
       - "-c"

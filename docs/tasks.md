@@ -75,7 +75,7 @@ timeout: 3600
 
 Agent task fields:
 
-- `agents`: a required ordered list of model names listed under `code_agents.<group>.models` in `~/.tinybutler/config.yaml`. TinyButler resolves each group and model to its configured backend, tries them in order, and records task failure only after the final agent fails.
+- `agents`: a required ordered list of `group/model` references listed under `code_agents.<group>.models` in `~/.tinybutler/config.yaml`. TinyButler resolves each group and model to its configured backend, tries them in order, and records task failure only after the final agent fails.
 - `session`: `independent` starts a fresh session; `reuse` resumes the previous successful session when the runner supports it.
 
 Agent runner configuration, session placeholders, and sandbox/model flags are owned by [configuration.md](configuration.md).

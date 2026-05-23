@@ -190,7 +190,7 @@ fn init_refreshes_repo_scoped_operation_skill() {
 }
 
 #[test]
-fn init_codex_group_reads_prompt_from_stdin_and_emit_json() {
+fn init_codex_group_passes_prompt_as_argument_and_emits_json() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
@@ -219,10 +219,13 @@ fn init_codex_group_reads_prompt_from_stdin_and_emit_json() {
             args.iter().any(|value| value.as_str() == Some("{model}")),
             "codex {field} should use the selected model placeholder"
         );
-        assert_eq!(
-            args.last().and_then(|value| value.as_str()),
-            Some("stdin"),
-            "codex {field} should mark prompt delivery through stdin"
+        assert!(
+            args.iter().any(|value| value.as_str() == Some("{prompt}")),
+            "codex {field} should pass the prompt through the prompt placeholder"
+        );
+        assert!(
+            !args.iter().any(|value| value.as_str() == Some("{stdin}")),
+            "codex {field} should not default to stdin prompt delivery"
         );
     }
 }
@@ -237,17 +240,17 @@ fn check_rejects_agent_config_without_prompt_or_stdin() {
 
     let config_text = std::fs::read_to_string(home.join("config.yaml"))
         .expect("read config")
-        .replace("      - stdin", "      - --no-prompt-placeholder");
+        .replace("      - \"{prompt}\"", "      - --no-prompt-placeholder");
     std::fs::write(home.join("config.yaml"), config_text).expect("write config");
 
     let check = run_tinybutler(home, &["check"]);
     assert!(
         !check.status.success(),
-        "check should reject agent args without prompt or stdin"
+        "check should reject agent args without prompt or stdin marker"
     );
     let error = stderr(&check);
     assert!(
-        error.contains("must contain {prompt} or end with stdin"),
+        error.contains("must contain {prompt} or {stdin}"),
         "stderr should explain prompt delivery requirement: {error}"
     );
 }
@@ -283,11 +286,11 @@ code_agents:
     );
     let error = stderr(&check);
     assert!(
-        error.contains("non-runnable code_agents model gpt-5.3-codex-spark"),
+        error.contains("non-runnable code_agents model codex/gpt-5.3-codex-spark"),
         "stderr should mention the non-runnable model: {error}"
     );
     assert!(
-        error.contains("must contain {prompt} or end with stdin"),
+        error.contains("must contain {prompt} or {stdin}"),
         "stderr should explain prompt delivery requirement: {error}"
     );
 }
@@ -392,7 +395,7 @@ fn check_rejects_missing_task_execution_files_and_runners() {
     let task_yaml = home.join("tasks/smoke-task/task.yaml");
     let text = std::fs::read_to_string(&task_yaml)
         .expect("read task yaml")
-        .replace("  - gpt-5.3-codex-spark", "  - missing-runner");
+        .replace("  - codex/gpt-5.3-codex-spark", "  - codex/missing-runner");
     std::fs::write(&task_yaml, text).expect("write task yaml");
 
     let missing_runner = run_tinybutler(home, &["check"]);
@@ -401,7 +404,7 @@ fn check_rejects_missing_task_execution_files_and_runners() {
         "check should reject agent tasks with unknown runners"
     );
     assert!(
-        stderr(&missing_runner).contains("code_agents model missing-runner"),
+        stderr(&missing_runner).contains("code_agents model codex/missing-runner"),
         "stderr should mention missing runner: {}",
         stderr(&missing_runner)
     );
@@ -504,7 +507,7 @@ fn agent_task_tries_agents_in_order_until_one_succeeds() {
   chat_id: null
 
 code_agents:
-  fail-agent:
+  fail:
     command: /bin/sh
     models:
       - fail-agent
@@ -514,8 +517,9 @@ code_agents:
         printf 'first stdout\n'
         printf 'first stderr\n' >&2
         exit 7
+      - "{model}"
       - "{prompt}"
-  success-agent:
+  success:
     command: /bin/sh
     models:
       - success-agent
@@ -523,6 +527,7 @@ code_agents:
       - "-c"
       - |
         printf '{"session_id":"session-ok"}\n'
+      - "{model}"
       - "{prompt}"
 "#,
     )
@@ -536,8 +541,8 @@ code_agents:
 enabled: false
 schedule: "0 9 * * *"
 agents:
-  - fail-agent
-  - success-agent
+  - fail/fail-agent
+  - success/success-agent
 type: agent
 session: independent
 timeout: 30
@@ -551,7 +556,7 @@ timeout: 30
 
     let list = run_tinybutler(home, &["task", "list"]);
     assert!(list.status.success(), "{}", stderr(&list));
-    assert!(stdout(&list).contains("agents: fail-agent -> success-agent"));
+    assert!(stdout(&list).contains("agents: fail/fail-agent -> success/success-agent"));
 
     let run = run_tinybutler_with_input(home, &["tasks"], "fallback-task\nrun\n");
     assert!(run.status.success(), "{}", stderr(&run));
@@ -562,14 +567,14 @@ timeout: 30
     .expect("parse state");
     assert_eq!(state["last_status"], "success");
     assert_eq!(state["session_id"], "session-ok");
-    assert_eq!(state["session_runner"], "success-agent");
+    assert_eq!(state["session_runner"], "success/success-agent");
     assert_eq!(state["failure_count"], 0);
 
     let latest_log = state["last_log"].as_str().expect("last log");
     let log = std::fs::read_to_string(task_dir.join(latest_log)).expect("read latest log");
-    assert!(log.contains("--- agent fail-agent stdout ---"));
-    assert!(log.contains("--- agent fail-agent stderr exit_code=Some(7) ---"));
-    assert!(log.contains("--- agent success-agent stdout ---"));
+    assert!(log.contains("--- agent fail/fail-agent stdout ---"));
+    assert!(log.contains("--- agent fail/fail-agent stderr exit_code=Some(7) ---"));
+    assert!(log.contains("--- agent success/success-agent stdout ---"));
 }
 
 #[test]

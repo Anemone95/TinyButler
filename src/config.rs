@@ -60,10 +60,10 @@ pub struct CodeAgentConfig {
     pub models: Vec<String>,
 }
 
-/// Resolved code-agent backend for a requested model name.
+/// Resolved code-agent backend for a requested `group/model` reference.
 #[derive(Debug, Clone)]
 pub struct ResolvedCodeAgent<'a> {
-    /// Requested model name from a task or chat selection.
+    /// Concrete model name passed to the backend CLI.
     pub model: String,
     /// Backend command template that supports `model`.
     pub config: &'a CodeAgentConfig,
@@ -124,33 +124,17 @@ impl Config {
         self.home.join("chat.lock")
     }
 
-    /// Resolve a model name to its configured code-agent backend.
-    pub fn code_agent_for_model(&self, model: &str) -> Option<ResolvedCodeAgent<'_>> {
-        if let Some((group, model_name)) = model.split_once('/')
-            && let Some(config) = self.code_agents.get(group).filter(|config| {
-                config
-                    .models
-                    .iter()
-                    .any(|configured| configured == model_name)
-            })
-        {
-            return Some(ResolvedCodeAgent {
-                model: model.to_string(),
-                config,
-            });
-        }
-
-        for (group, config) in &self.code_agents {
-            let legacy_direct_match = config.models.is_empty() && group == model;
-            let configured_model_match = config.models.iter().any(|configured| configured == model);
-            if legacy_direct_match || configured_model_match {
-                return Some(ResolvedCodeAgent {
-                    model: model.to_string(),
-                    config,
-                });
-            }
-        }
-        None
+    /// Resolve a `group/model` reference to its configured code-agent backend.
+    pub fn code_agent_for_model(&self, model_reference: &str) -> Option<ResolvedCodeAgent<'_>> {
+        let (group, model_name) = model_reference.split_once('/')?;
+        let config = self
+            .code_agents
+            .get(group)
+            .filter(|config| config.models.iter().any(|model| model == model_name))?;
+        Some(ResolvedCodeAgent {
+            model: model_name.to_string(),
+            config,
+        })
     }
 
     /// Return all configured model references that have interactive stream args.
@@ -167,16 +151,8 @@ impl Config {
 
     /// Validate local code-agent command templates.
     pub fn validate_code_agents(&self) -> Result<()> {
-        let mut model_groups = BTreeMap::new();
         for (group, config) in &self.code_agents {
             config.validate_templates(group)?;
-            for model in config.model_names(group) {
-                if let Some(existing_group) = model_groups.insert(model.clone(), group.clone()) {
-                    bail!(
-                        "code_agents model {model} is listed by both {existing_group} and {group}"
-                    );
-                }
-            }
         }
         Ok(())
     }
@@ -191,33 +167,16 @@ impl Config {
 }
 
 impl CodeAgentConfig {
-    /// Return explicit model names, or the group key for legacy direct runners.
-    pub fn model_names(&self, group: &str) -> Vec<String> {
-        if self.models.is_empty() {
-            vec![group.to_string()]
-        } else {
-            self.models.clone()
-        }
-    }
-
     /// Return chat-facing model references, qualifying grouped models.
     pub fn model_references(&self, group: &str) -> Vec<String> {
-        if self.models.is_empty() {
-            vec![group.to_string()]
-        } else {
-            self.models
-                .iter()
-                .map(|model| format!("{group}/{model}"))
-                .collect()
-        }
+        self.models
+            .iter()
+            .map(|model| format!("{group}/{model}"))
+            .collect()
     }
 
     /// True when `model` matches one chat-facing reference from this group.
     pub fn has_model_reference(&self, group: &str, model: &str) -> bool {
-        if self.models.is_empty() {
-            return group == model;
-        }
-
         model
             .split_once('/')
             .is_some_and(|(model_group, model_name)| {
@@ -227,8 +186,16 @@ impl CodeAgentConfig {
 
     /// Validate argument templates that run scheduled prompts.
     pub fn validate_templates(&self, group: &str) -> Result<()> {
+        if self.models.is_empty() {
+            bail!("code_agents.{group}.models must list at least one model");
+        }
+        validate_optional_model_args(group, "new_args", &self.new_args)?;
+        validate_optional_model_args(group, "resume_args", &self.resume_args)?;
+        validate_optional_model_args(group, "stream_args", &self.stream_args)?;
         validate_optional_prompt_args(group, "new_args", &self.new_args)?;
-        validate_optional_prompt_args(group, "resume_args", &self.resume_args)
+        validate_optional_prompt_args(group, "resume_args", &self.resume_args)?;
+        validate_resume_args(group, &self.resume_args)?;
+        Ok(())
     }
 }
 
@@ -237,29 +204,20 @@ impl CodeAgentConfig {
 pub(crate) enum PromptMode {
     /// The prompt is expanded into an argument containing `{prompt}`.
     Argument,
-    /// The prompt is written to stdin and trailing `stdin` is not passed.
+    /// The prompt is written to stdin and the `{stdin}` marker is not passed.
     Stdin,
-    /// Old templates used `stdio` for stdin prompt delivery.
-    LegacyStdio,
-    /// Legacy templates pass `-` to the process and write the prompt to stdin.
-    LegacyDash,
 }
 
 /// Infer and validate prompt delivery for one argument template.
 pub(crate) fn prompt_mode_for_args(args: &[String]) -> Result<PromptMode> {
     let has_prompt_arg = args.iter().any(|arg| arg.contains("{prompt}"));
-    let has_stdin = args.last().is_some_and(|arg| arg == "stdin");
-    let has_stdio = args.last().is_some_and(|arg| arg == "stdio");
-    let has_legacy_dash = args.last().is_some_and(|arg| arg == "-");
-    match (has_prompt_arg, has_stdin, has_stdio, has_legacy_dash) {
-        (true, false, false, false) => Ok(PromptMode::Argument),
-        (false, true, false, false) => Ok(PromptMode::Stdin),
-        (false, false, true, false) => Ok(PromptMode::LegacyStdio),
-        (false, false, false, true) => Ok(PromptMode::LegacyDash),
-        (true, _, _, _) => {
-            bail!("agent args must use either {{prompt}} or trailing stdin, not both")
-        }
-        (false, _, _, _) => bail!("agent args must contain {{prompt}} or end with stdin"),
+    let stdin_marker_count = args.iter().filter(|arg| arg.as_str() == "{stdin}").count();
+    match (has_prompt_arg, stdin_marker_count) {
+        (true, 0) => Ok(PromptMode::Argument),
+        (false, 1) => Ok(PromptMode::Stdin),
+        (true, _) => bail!("agent args must use either {{prompt}} or {{stdin}}, not both"),
+        (false, 0) => bail!("agent args must contain {{prompt}} or {{stdin}}"),
+        (false, _) => bail!("agent args must contain only one {{stdin}} marker"),
     }
 }
 
@@ -268,6 +226,26 @@ fn validate_optional_prompt_args(group: &str, field: &str, args: &[String]) -> R
         return Ok(());
     }
     prompt_mode_for_args(args).with_context(|| format!("invalid code_agents.{group}.{field}"))?;
+    Ok(())
+}
+
+fn validate_optional_model_args(group: &str, field: &str, args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        return Ok(());
+    }
+    if !args.iter().any(|arg| arg.contains("{model}")) {
+        bail!("code_agents.{group}.{field} must contain {{model}}");
+    }
+    Ok(())
+}
+
+fn validate_resume_args(group: &str, args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        return Ok(());
+    }
+    if !args.iter().any(|arg| arg.contains("{sessionId}")) {
+        bail!("code_agents.{group}.resume_args must contain {{sessionId}}");
+    }
     Ok(())
 }
 
@@ -493,14 +471,10 @@ mod tests {
     }
 
     #[test]
-    fn resolves_models_through_configured_agent_groups() {
+    fn rejects_unqualified_model_names() {
         let config = config_with_agent("codex", &["gpt-5.5"]);
-        let agent = config
-            .code_agent_for_model("gpt-5.5")
-            .expect("model should resolve");
 
-        assert_eq!(agent.model, "gpt-5.5");
-        assert_eq!(agent.config.command, "/bin/true");
+        assert!(config.code_agent_for_model("gpt-5.5").is_none());
     }
 
     #[test]
@@ -510,19 +484,15 @@ mod tests {
             .code_agent_for_model("codex/gpt-5.5")
             .expect("qualified model should resolve");
 
-        assert_eq!(agent.model, "codex/gpt-5.5");
+        assert_eq!(agent.model, "gpt-5.5");
         assert_eq!(agent.config.command, "/bin/true");
     }
 
     #[test]
-    fn resolves_real_model_names_that_contain_slashes() {
-        let config = config_with_agent("codex", &["openai/gpt-4.1"]);
-        let agent = config
-            .code_agent_for_model("openai/gpt-4.1")
-            .expect("slash-containing model should resolve by exact model name");
+    fn rejects_unknown_groups_in_qualified_references() {
+        let config = config_with_agent("codex", &["gpt-5.5"]);
 
-        assert_eq!(agent.model, "openai/gpt-4.1");
-        assert_eq!(agent.config.command, "/bin/true");
+        assert!(config.code_agent_for_model("openai/gpt-4.1").is_none());
     }
 
     #[test]
@@ -533,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_model_names() {
+    fn allows_duplicate_model_names_in_different_groups() {
         let mut config = config_with_agent("codex", &["gpt-5.5"]);
         config.code_agents.insert(
             "backup-codex".to_string(),
@@ -544,31 +514,67 @@ mod tests {
             },
         );
 
-        let err = config.validate_code_agents().expect_err("duplicate model");
-        assert!(err.to_string().contains("gpt-5.5"));
+        config
+            .validate_code_agents()
+            .expect("group-qualified references are distinct");
     }
 
     #[test]
-    fn supports_legacy_direct_agent_keys_without_models() {
+    fn rejects_agent_groups_without_models() {
         let config = config_with_agent("gpt-5.5", &[]);
-        let agent = config
-            .code_agent_for_model("gpt-5.5")
-            .expect("legacy direct key should resolve");
+        let err = config
+            .validate_code_agents()
+            .expect_err("empty models should be rejected");
 
-        assert_eq!(agent.model, "gpt-5.5");
-        assert_eq!(agent.config.command, "/bin/true");
+        assert!(
+            err.to_string()
+                .contains("models must list at least one model")
+        );
     }
 
     #[test]
-    fn accepts_legacy_dash_stdin_marker() {
-        let args = vec!["exec".to_string(), "-".to_string()];
+    fn rejects_runnable_args_without_model_placeholder() {
+        let mut config = config_with_agent("codex", &["gpt-5.5"]);
+        config
+            .code_agents
+            .get_mut("codex")
+            .expect("codex config")
+            .new_args = vec!["exec".to_string(), "{prompt}".to_string()];
 
-        assert_eq!(prompt_mode_for_args(&args).unwrap(), PromptMode::LegacyDash);
+        let err = config
+            .validate_code_agents()
+            .expect_err("missing model placeholder should be rejected");
+
+        assert!(err.to_string().contains("new_args must contain {model}"));
+    }
+
+    #[test]
+    fn rejects_resume_args_without_session_placeholder() {
+        let mut config = config_with_agent("codex", &["gpt-5.5"]);
+        config
+            .code_agents
+            .get_mut("codex")
+            .expect("codex config")
+            .resume_args = vec![
+            "exec".to_string(),
+            "resume".to_string(),
+            "{model}".to_string(),
+            "{prompt}".to_string(),
+        ];
+
+        let err = config
+            .validate_code_agents()
+            .expect_err("missing session placeholder should be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("resume_args must contain {sessionId}")
+        );
     }
 
     #[test]
     fn accepts_stdin_prompt_marker() {
-        let args = vec!["exec".to_string(), "stdin".to_string()];
+        let args = vec!["exec".to_string(), "{stdin}".to_string()];
 
         assert_eq!(prompt_mode_for_args(&args).unwrap(), PromptMode::Stdin);
     }

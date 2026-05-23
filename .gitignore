@@ -1,5 +1,6 @@
 /target/
 /.tinybutler-test/
+/.idea/
 *.log
 __pycache__/
 vendor/**/.cargo-ok

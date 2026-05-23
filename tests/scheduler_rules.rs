@@ -17,7 +17,7 @@ fn task(task_type: TaskType) -> Task {
         enabled: true,
         schedule: "*/10 * * * *".to_string(),
         agents: if task_type == TaskType::Agent {
-            vec!["gpt-5.5".to_string()]
+            vec!["codex/gpt-5.5".to_string()]
         } else {
             Vec::new()
         },

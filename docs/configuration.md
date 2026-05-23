@@ -46,11 +46,11 @@ Code-agent CLI backends are configured under `code_agents.<group>` in local `~/.
 
 `templates/config.yaml` is the source for example runner entries.
 
-Each group entry may define `command`, `new_args`, `resume_args`, `stream_args`, and `models`.
+Each group entry defines `command` and `models`, and may define `new_args`, `resume_args`, and `stream_args`.
 
 `command` shows the agent CLI.
 
-`models` lists the unqualified model names that tasks can use.
+`models` lists the unqualified model names exposed by that backend group.
 The chat bridge session display and tasks configuration use `group_name/model_name`, for example `codex/gpt-5.5`.
 
 `new_args` is used for creating a session for a `session: reuse` task's first run or each run of a `session: independent` task.
@@ -60,8 +60,8 @@ The chat bridge session display and tasks configuration use `group_name/model_na
 `stream_args` is used for the chat interface, where the chat bridge can output tokens as a stream.
 It is optional for a model group, but only models in a group that has `stream_args` can be listed in the new session command.
 
-`new_args`, `resume_args`, and `stream_args` must contain a placeholder (`{model}`) so the actual task can choose the model later.
-They must also contain either `{prompt}` so the actual task can place the prompt, or `{stdin}` to show that the prompt should be put into standard input.
+`new_args`, `resume_args`, and `stream_args` must contain a placeholder (`{model}`) so the actual task or chat session can choose the model later.
+`new_args` and `resume_args` must also contain either `{prompt}` so the actual task can place the prompt, or a `{stdin}` argument to show that the prompt should be put into standard input.
 `resume_args` must contain `{sessionId}` for `session: reuse` tasks.
 
 

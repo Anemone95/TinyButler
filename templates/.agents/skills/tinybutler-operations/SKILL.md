@@ -241,49 +241,47 @@ code_agents:
       - danger-full-access
       - "-m"
       - "{model}"
+      - "-c"
+      - service_tier="fast"
       - "--skip-git-repo-check"
-      - "-"
-      - stdin
+      - "{prompt}"
     resume_args:
       - exec
       - resume
       - "--json"
-      - "{sessionId}"
       - "-m"
       - "{model}"
+      - "-c"
+      - sandbox_mode="danger-full-access"
+      - "-c"
+      - service_tier="fast"
       - "--skip-git-repo-check"
-      - "-"
-      - stdin
+      - "{sessionId}"
+      - "{prompt}"
 ```
 
 Place backend model, sandbox, and safety flags only in `code_agents` command
 argument templates. Do not put runner-specific flags in `task.yaml`.
 
-Task `agents` entries name models from `code_agents.<group>.models`; TinyButler
-resolves each model to its configured backend group. In `new_args` and
-`resume_args`, use `{prompt}` where the prompt should be inserted as an
-argument, or end the list with the literal `stdin` placeholder to send the
-prompt through standard input. TinyButler removes the `stdin` placeholder before
-spawning the command.
+Task `agents` entries are `group/model` references to models listed under
+`code_agents.<group>.models`. TinyButler resolves each reference to its configured
+backend group. In `new_args` and `resume_args`, use `{prompt}` where the prompt
+should be inserted as an argument, or include one literal `{stdin}` argument to
+send the prompt through standard input. TinyButler removes the `{stdin}` marker
+before spawning the command.
 
-For scheduled task runners, `{model}` is replaced with the task `agents` entry
-that matched config. Unqualified task entries pass unqualified model names to
-the CLI; grouped task entries pass the full `group/model` reference.
+For scheduled task runners, `{model}` is replaced with the unqualified model
+name from the matched `group/model` reference.
 
 When starting a chat session, TinyButler shows grouped model references such as
-`codex/gpt-5.5`; the full `group/model` reference is expanded into `stream_args`
-`{model}`.
-
-For migration compatibility, an old direct entry such as `code_agents.gpt-5.5`
-without a `models` list still resolves as model `gpt-5.5`, and old trailing
-`stdio` or `-` stdin args still work. Prefer explicit groups, `models`, and trailing `stdin`
-for new config.
+`codex/gpt-5.5`; `{model}` in `stream_args` is expanded to the unqualified model
+name from that reference.
 
 Common template model names:
 
-- `gemini-3.1-flash-lite`
-- `gpt-5.3-codex-spark`
-- `gpt-5.5`
+- `gemini/gemini-3.1-flash-lite`
+- `codex/gpt-5.3-codex-spark`
+- `codex/gpt-5.5`
 
 ## Task YAML Rules
 
@@ -369,7 +367,7 @@ name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
 agents:
-  - gpt-5.3-codex-spark
+  - codex/gpt-5.3-codex-spark
 type: agent
 session: independent
 timeout: 3600
@@ -385,11 +383,11 @@ Use `tinybutler telegram "..."` only when the result is useful to send.
 
 Agent task fields:
 
-- `agents`: required ordered list of model names listed under
-  `code_agents.<group>.models` in `~/.tinybutler/config.yaml`. Use a
-  one-element list for a single model. TinyButler resolves each model to its
-  backend group, tries each model in order, and reports task failure only after
-  the final agent fails.
+- `agents`: required ordered list of `group/model` references listed under
+  `code_agents.<group>.models` in `~/.tinybutler/config.yaml`. Use a one-element
+  list for a single model. TinyButler resolves each model to its backend group,
+  tries each model in order, and reports task failure only after the final agent
+  fails.
 - `session`: `independent` starts a new agent session every run. `reuse`
   resumes the previous successful session when the runner supports resume.
 

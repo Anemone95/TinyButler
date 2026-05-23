@@ -2,7 +2,7 @@ name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
 agents:
-  - gpt-5.3-codex-spark
+  - codex/gpt-5.3-codex-spark
 type: agent
 session: independent
 timeout: 3600

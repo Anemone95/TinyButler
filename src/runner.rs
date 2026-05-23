@@ -250,8 +250,8 @@ async fn run_code_agent(
     Ok(output)
 }
 
-/// Build a user-configured agent command and feed the prompt on stdin unless
-/// the argument template explicitly embeds `{prompt}`.
+/// Build a user-configured agent command and deliver the prompt through the
+/// template's explicit `{prompt}` or `{stdin}` marker.
 async fn run_agent_command(
     agent: &ResolvedCodeAgent<'_>,
     args: &[String],
@@ -265,11 +265,10 @@ async fn run_agent_command(
     command.kill_on_drop(true);
 
     let prompt_mode = prompt_mode_for_args(args)?;
-    let command_args = match prompt_mode {
-        PromptMode::Stdin | PromptMode::LegacyStdio => &args[..args.len() - 1],
-        PromptMode::Argument | PromptMode::LegacyDash => args,
-    };
-    for arg in command_args {
+    for arg in args {
+        if prompt_mode == PromptMode::Stdin && arg == "{stdin}" {
+            continue;
+        }
         command.arg(expand_agent_arg(
             arg,
             &agent.model,
@@ -279,11 +278,7 @@ async fn run_agent_command(
         ));
     }
 
-    let stdin_text = matches!(
-        prompt_mode,
-        PromptMode::Stdin | PromptMode::LegacyStdio | PromptMode::LegacyDash
-    )
-    .then(|| prompt.to_string());
+    let stdin_text = (prompt_mode == PromptMode::Stdin).then(|| prompt.to_string());
     run_command(command, stdin_text, task.timeout).await
 }
 
@@ -492,7 +487,10 @@ mod tests {
             name: "fallback-task".to_string(),
             enabled: true,
             schedule: "0 * * * *".to_string(),
-            agents: vec!["fail-agent".to_string(), "success-agent".to_string()],
+            agents: vec![
+                "fail/fail-agent".to_string(),
+                "success/success-agent".to_string(),
+            ],
             task_type: TaskType::Agent,
             session: SessionMode::Independent,
             timeout: 30,
@@ -504,26 +502,26 @@ mod tests {
 
         let mut code_agents = BTreeMap::new();
         code_agents.insert(
-            "fail-agent".to_string(),
+            "fail".to_string(),
             CodeAgentConfig {
                 command: "/bin/sh".to_string(),
                 new_args: vec![
                     "-c".to_string(),
                     "printf 'first failed\\n'; printf 'bad agent\\n' >&2; exit 7".to_string(),
-                    "stdin".to_string(),
+                    "{prompt}".to_string(),
                 ],
                 models: vec!["fail-agent".to_string()],
                 ..Default::default()
             },
         );
         code_agents.insert(
-            "success-agent".to_string(),
+            "success".to_string(),
             CodeAgentConfig {
                 command: "/bin/sh".to_string(),
                 new_args: vec![
                     "-c".to_string(),
-                    "cat >/dev/null; printf '{\"session_id\":\"session-ok\"}\\n'".to_string(),
-                    "stdin".to_string(),
+                    "printf '{\"session_id\":\"session-ok\"}\\n'".to_string(),
+                    "{prompt}".to_string(),
                 ],
                 models: vec!["success-agent".to_string()],
                 ..Default::default()
@@ -542,16 +540,23 @@ mod tests {
         assert_eq!(outcome.status, "success");
         assert_eq!(outcome.exit_code, Some(0));
         assert_eq!(outcome.session_id.as_deref(), Some("session-ok"));
-        assert_eq!(outcome.agent_runner.as_deref(), Some("success-agent"));
-        assert!(outcome.stdout.contains("--- agent fail-agent stdout ---"));
+        assert_eq!(
+            outcome.agent_runner.as_deref(),
+            Some("success/success-agent")
+        );
         assert!(
             outcome
                 .stdout
-                .contains("--- agent success-agent stdout ---")
+                .contains("--- agent fail/fail-agent stdout ---")
+        );
+        assert!(
+            outcome
+                .stdout
+                .contains("--- agent success/success-agent stdout ---")
         );
         let log = fs::read_to_string(outcome.log_path)
             .await
             .expect("read log");
-        assert!(log.contains("--- agent fail-agent stderr exit_code=Some(7) ---"));
+        assert!(log.contains("--- agent fail/fail-agent stderr exit_code=Some(7) ---"));
     }
 }
