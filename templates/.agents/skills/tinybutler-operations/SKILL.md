@@ -45,10 +45,11 @@ tinybutler restart
 Start the scheduler loop. When Telegram is configured, the daemon also starts
 the Telegram long-polling command loop.
 
-Use `tinybutler restart` after editing `~/.tinybutler/config.yaml` or task
-definitions. The command validates config and scheduled tasks first, then
-signals the running daemon to re-exec itself in place without calling
-`systemctl restart`.
+Use `tinybutler restart` after editing `~/.tinybutler/config.yaml` so the
+daemon reloads runner and Telegram settings. Task definition updates do not
+require a restart; the scheduler picks them up on the next tick. The restart
+command validates config and scheduled tasks first, then signals the running
+daemon to re-exec itself in place without calling `systemctl restart`.
 
 ```bash
 tinybutler tasks
@@ -63,7 +64,9 @@ keyboard, inspect its `task.yaml` plus `agent.md` or `run.sh`, then choose
 Use `tinybutler task list` in scripts and agent workflows to print all tasks
 with enabled state, type, agents, schedule description, latest state, next run
 time, and counters. Use `tinybutler task status <task>` to print task details,
-`state.json`, and the latest-log preview.
+`state.json`, and the latest-log preview. For long logs, the preview shows the
+first seven lines, an ellipsis, and the last seven lines, with each displayed
+line truncated to 80 characters.
 
 ```bash
 tinybutler chat new

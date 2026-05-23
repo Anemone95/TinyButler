@@ -524,7 +524,54 @@ fn task_run_and_status_record_latest_log() {
     assert!(!out.contains("**run.sh:**"));
     assert!(!out.contains("**state.json:**"));
     assert!(out.contains("regular-check ok:"));
-    assert!(out.contains("**latest_log_first_20_lines:**"));
+    assert!(out.contains("**latest_log_preview:**"));
+}
+
+#[test]
+fn task_status_compacts_and_truncates_latest_log_preview() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let task_dir = home.join("tasks/smoke-task");
+    let logs_dir = task_dir.join("logs");
+    std::fs::create_dir_all(&logs_dir).expect("logs dir");
+
+    let long_line = "x".repeat(100);
+    let mut log_lines = vec![long_line.clone()];
+    log_lines.extend((2..=20).map(|index| format!("line-{index:02}")));
+    std::fs::write(logs_dir.join("long.log"), log_lines.join("\n")).expect("write log");
+
+    std::fs::write(
+        task_dir.join("state.json"),
+        serde_json::to_string_pretty(&json!({
+            "last_status": "success",
+            "last_exit_code": 0,
+            "last_log": "logs/long.log",
+            "running": false,
+            "run_count": 1,
+            "failure_count": 0
+        }))
+        .expect("state json"),
+    )
+    .expect("write state");
+
+    let status = run_tinybutler(home, &["task", "status", "smoke-task"]);
+    assert!(status.status.success(), "{}", stderr(&status));
+    let out = stdout(&status);
+
+    let truncated_long_line = format!("{}...", "x".repeat(77));
+    assert!(out.contains("**latest_log_preview:**"));
+    assert!(out.contains(&truncated_long_line));
+    assert!(!out.contains(&long_line));
+    assert!(out.contains("line-07"));
+    assert!(out.contains("\n...\n"));
+    assert!(!out.contains("line-08"));
+    assert!(!out.contains("line-13"));
+    assert!(out.contains("line-14"));
+    assert!(out.contains("line-20"));
 }
 
 #[test]

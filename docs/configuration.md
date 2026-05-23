@@ -26,7 +26,7 @@ TinyButler stores local configuration and runtime files under `~/.tinybutler/` b
 
 `templates/config.yaml` is the repository example. It must stay usable without real secrets.
 
-The running daemon reads `config.yaml` at startup. Use `tinybutler restart` after editing local config or task files; it validates config and tasks first, then signals the running daemon to re-exec itself in place without calling `systemctl restart`.
+The running daemon reads `config.yaml` at startup. Use `tinybutler restart` after editing local config so the daemon reloads runner and Telegram settings; it validates config and tasks first, then signals the running daemon to re-exec itself in place without calling `systemctl restart`. Updating task directories or `task.yaml` does not require a restart because the scheduler re-scans tasks on each tick.
 
 ## Telegram Config
 

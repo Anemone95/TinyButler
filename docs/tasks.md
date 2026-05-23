@@ -103,7 +103,7 @@ The selected-task view then offers these actions:
 - `enable`: show only when the task is disabled; set `enabled: true`.
 - `disable`: show only when the task is enabled; set `enabled: false`.
 
-In CLI or agent environments, use `tinybutler task list` for a stable task summary and `tinybutler task status <task>` for current state and latest-log preview. Task-owned files can also be inspected directly from `~/.tinybutler/tasks/<task-name>/` when lower-level file access is useful.
+In CLI or agent environments, use `tinybutler task list` for a stable task summary and `tinybutler task status <task>` for current state and latest-log preview. The preview is intended for quick scanning: logs longer than 14 lines show the first seven lines, an ellipsis line, and the last seven lines, and each displayed line is truncated to 80 characters with an ellipsis. Task-owned files can also be inspected directly from `~/.tinybutler/tasks/<task-name>/` when lower-level file access is useful.
 
 ## Scheduler Loop
 
@@ -111,9 +111,9 @@ The daemon uses a periodic scan model. On startup it scans `tasks/*/task.yaml` w
 
 Each scheduler tick re-scans `tasks/*/task.yaml` before due checks. The default tick interval is 30 seconds and can be changed with `tinybutler daemon --interval-seconds <seconds>`.
 
-Adding, removing, or editing task directories while the daemon is running is picked up on the next tick.
+Adding, removing, or editing task directories while the daemon is running is picked up on the next tick. Task updates do not require restarting the daemon.
 
-Use `tinybutler restart` after editing local config or when you want a clean service restart. It first validates config, task schemas, task-owned execution files, and agent runner references. If validation succeeds, it signals the running daemon to re-exec itself in place without calling `systemctl restart`. If validation fails, it reports the error and does not signal the daemon.
+Use `tinybutler restart` after editing local `config.yaml` or when you want a clean service restart. It first validates config, task schemas, task-owned execution files, and agent runner references. If validation succeeds, it signals the running daemon to re-exec itself in place without calling `systemctl restart`. If validation fails, it reports the error and does not signal the daemon.
 
 CLI commands such as `tinybutler check`, `tinybutler tasks`, `tinybutler task list`, and `tinybutler task status <task>` read the relevant files directly when invoked.
 

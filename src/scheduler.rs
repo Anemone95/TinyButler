@@ -26,6 +26,9 @@ use crate::state::TaskState;
 use crate::task::{Task, TaskType};
 use crate::telegram;
 
+const LOG_PREVIEW_EDGE_LINES: usize = 7;
+const LOG_PREVIEW_MAX_LINE_CHARS: usize = 80;
+
 /// Long-running scheduler bound to one TinyButler home directory.
 pub struct Scheduler {
     config: Config,
@@ -271,7 +274,7 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Print task runtime state and the first 20 lines of the latest log.
+    /// Print task runtime state and a compact preview of the latest log.
     pub async fn task_status(&self, name: &str) -> Result<()> {
         println!("{}", self.task_status_text(name).await?);
         Ok(())
@@ -303,12 +306,12 @@ impl Scheduler {
         if let Some(log) = state.last_log.as_deref() {
             let log_path = task.dir.join(log);
             output.push_str(&format!(
-                "\n\n**latest_log_first_20_lines:** `{}`",
+                "\n\n**latest_log_preview:** `{}`",
                 log_path.display()
             ));
             match log_retention::read_log_text(&task.dir, log).await {
                 Ok(text) => {
-                    let preview = text.lines().take(20).collect::<Vec<_>>().join("\n");
+                    let preview = compact_log_preview(&text);
                     output.push('\n');
                     output.push_str(&markdown_code_fence("text", &preview));
                 }
@@ -608,6 +611,36 @@ pub fn set_enabled_in_task_yaml(text: &str, enabled: bool) -> String {
     let mut out = lines.join("\n");
     out.push('\n');
     out
+}
+
+fn compact_log_preview(text: &str) -> String {
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut preview_lines = Vec::new();
+
+    if lines.len() > LOG_PREVIEW_EDGE_LINES * 2 {
+        preview_lines.extend_from_slice(&lines[..LOG_PREVIEW_EDGE_LINES]);
+        preview_lines.push("...");
+        preview_lines.extend_from_slice(&lines[lines.len() - LOG_PREVIEW_EDGE_LINES..]);
+    } else {
+        preview_lines.extend_from_slice(&lines);
+    }
+
+    preview_lines
+        .into_iter()
+        .map(truncate_log_preview_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn truncate_log_preview_line(line: &str) -> String {
+    if line.chars().count() <= LOG_PREVIEW_MAX_LINE_CHARS {
+        return line.to_string();
+    }
+
+    line.chars()
+        .take(LOG_PREVIEW_MAX_LINE_CHARS.saturating_sub(3))
+        .chain("...".chars())
+        .collect()
 }
 
 fn markdown_code_fence(info: &str, text: &str) -> String {
