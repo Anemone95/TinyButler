@@ -28,7 +28,7 @@ Telegram command mapping, authorization, bot menu registration, and polling are 
 | `tinybutler chat session` | `/session` | Resume a previous interactive chat session after selection |
 | Ctrl+C inside chat REPL | `/abort` | Abort the active code-agent turn |
 
-`/new` should return an inline menu containing only streaming-capable runners, as defined by [configuration.md](configuration.md).
+`/new` should return an inline menu containing only streaming-capable model references, as defined by [configuration.md](configuration.md). Grouped code-agent config entries must be shown as `group/model`, for example `codex/gpt-5.5`.
 
 Selecting a model starts a fresh Telegram chat bridge session.
 

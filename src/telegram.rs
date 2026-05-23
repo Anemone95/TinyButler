@@ -22,7 +22,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 
 use crate::chat::{
-    chat_working_directory, codex_streaming_runner_keys, load_recovered_chat_state,
+    chat_working_directory, codex_streaming_model_names, load_recovered_chat_state,
     mark_chat_inactive, mark_turn_finished, mark_turn_started, ChatAgent, ChatEvent,
     ChatInstructionContext, ChatLock, ChatSession, ChatStateValue, CodexChatAgent,
 };
@@ -390,7 +390,7 @@ async fn handle_tasks_command(config: &Config, chat_id: &str) -> Result<()> {
 }
 
 async fn handle_new_command(config: &Config, chat_id: &str) -> Result<()> {
-    let runners = codex_streaming_runner_keys(config);
+    let runners = codex_streaming_model_names(config);
     if runners.is_empty() {
         return send_markdown_text_to_chat(
             config,
@@ -764,7 +764,7 @@ async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Re
     let agent_config = config
         .code_agent_for_model(runner)
         .with_context(|| format!("missing code_agents model {runner}"))?;
-    if !codex_streaming_runner_keys(config).contains(&runner.to_string()) {
+    if !codex_streaming_model_names(config).contains(&runner.to_string()) {
         return send_markdown_text_to_chat(config, chat_id, "Runner no longer supports chat").await;
     }
     if !claim_telegram_selection(

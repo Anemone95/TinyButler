@@ -171,22 +171,15 @@ impl Drop for ChatLock {
     }
 }
 
-/// Return configured model names that can start interactive streaming sessions.
-pub fn streaming_runner_keys(config: &Config) -> Vec<String> {
-    config.streaming_model_names()
-}
-
 /// Return model names supported by the current Codex chat adapter.
-pub fn codex_streaming_runner_keys(config: &Config) -> Vec<String> {
-    config
-        .streaming_model_names()
-        .into_iter()
-        .filter(|model| {
-            config
-                .code_agent_for_model(model)
-                .is_some_and(|agent| codex_chat_supported(agent.config))
-        })
-        .collect()
+pub fn codex_streaming_model_names(config: &Config) -> Vec<String> {
+    let mut models = Vec::new();
+    for (group, agent) in &config.code_agents {
+        if codex_chat_supported(agent) {
+            models.extend(agent.model_references(group));
+        }
+    }
+    models
 }
 
 /// True when a runner can be handled by `CodexChatAgent`.
@@ -796,7 +789,6 @@ mod tests {
 
     fn resolved_codex_config(config: &CodeAgentConfig) -> ResolvedCodeAgent<'_> {
         ResolvedCodeAgent {
-            group: "codex",
             model: "gpt-test".to_string(),
             config,
         }
@@ -822,10 +814,10 @@ mod tests {
             },
         );
 
-        assert_eq!(codex_streaming_runner_keys(&config), vec!["gpt-test"]);
+        assert_eq!(codex_streaming_model_names(&config), vec!["codex/gpt-test"]);
         assert_eq!(
-            streaming_runner_keys(&config),
-            vec!["gpt-test", "gemini-test"]
+            config.streaming_model_names(),
+            vec!["codex/gpt-test", "gemini/gemini-test"]
         );
     }
 

@@ -20,7 +20,7 @@ use tokio::time::{sleep, Instant};
 use tracing_subscriber::EnvFilter;
 
 use tinybutler::chat::{
-    chat_working_directory, codex_streaming_runner_keys, load_recovered_chat_state,
+    chat_working_directory, codex_streaming_model_names, load_recovered_chat_state,
     mark_turn_aborting, mark_turn_finished, mark_turn_started, ChatAgent, ChatEvent,
     ChatInstructionContext, ChatLock, ChatRuntimeState, ChatSession, ChatStateValue,
     CodexChatAgent,
@@ -559,7 +559,7 @@ async fn record_selected_session(config: &Config, session: ChatSession) -> Resul
 }
 
 fn choose_chat_runner(config: &Config, runner: Option<String>) -> Result<String> {
-    let runners = codex_streaming_runner_keys(config);
+    let runners = codex_streaming_model_names(config);
     if runners.is_empty() {
         bail!("no configured Codex streaming runners under code_agents");
     }

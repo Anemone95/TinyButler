@@ -14,7 +14,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use crate::config::{Config, ResolvedCodeAgent};
+use crate::config::{prompt_mode_for_args, Config, PromptMode, ResolvedCodeAgent};
 use crate::state::TaskState;
 use crate::task::{SessionMode, Task, TaskType};
 
@@ -221,16 +221,16 @@ async fn run_code_agents(
 /// Run one configured code-agent command.
 async fn run_code_agent(
     config: &Config,
-    runner_key: &str,
+    model_name: &str,
     task: &Task,
     state: &TaskState,
     prompt: &str,
 ) -> Result<ProcessOutput> {
     let agent = config
-        .code_agent_for_model(runner_key)
-        .with_context(|| format!("missing code_agents model {runner_key} in config.yaml"))?;
+        .code_agent_for_model(model_name)
+        .with_context(|| format!("missing code_agents model {model_name} in config.yaml"))?;
     if task.session == SessionMode::Reuse {
-        if let Some(session_id) = reusable_session_id(state, runner_key) {
+        if let Some(session_id) = reusable_session_id(state, model_name) {
             if !agent.config.resume_args.is_empty() {
                 let mut output = run_agent_command(
                     &agent,
@@ -240,14 +240,14 @@ async fn run_code_agent(
                     Some(session_id),
                 )
                 .await?;
-                output.agent_runner = Some(runner_key.to_string());
+                output.agent_runner = Some(model_name.to_string());
                 return Ok(output);
             }
         }
     }
 
     let mut output = run_agent_command(&agent, &agent.config.new_args, task, prompt, None).await?;
-    output.agent_runner = Some(runner_key.to_string());
+    output.agent_runner = Some(model_name.to_string());
     Ok(output)
 }
 
@@ -266,10 +266,9 @@ async fn run_agent_command(
     command.kill_on_drop(true);
 
     let prompt_mode = prompt_mode_for_args(args)?;
-    let command_args = if prompt_mode == PromptMode::Stdio {
-        &args[..args.len() - 1]
-    } else {
-        args
+    let command_args = match prompt_mode {
+        PromptMode::Stdio => &args[..args.len() - 1],
+        PromptMode::Argument | PromptMode::LegacyStdio => args,
     };
     for arg in command_args {
         command.arg(expand_agent_arg(
@@ -281,7 +280,8 @@ async fn run_agent_command(
         ));
     }
 
-    let stdin_text = (prompt_mode == PromptMode::Stdio).then(|| prompt.to_string());
+    let stdin_text = matches!(prompt_mode, PromptMode::Stdio | PromptMode::LegacyStdio)
+        .then(|| prompt.to_string());
     run_command(command, stdin_text, task.timeout).await
 }
 
@@ -351,23 +351,6 @@ fn expand_agent_arg(
         .replace("{model}", model)
         .replace("{sessionId}", session_id.unwrap_or(""))
         .replace("{taskDir}", &task.dir.display().to_string())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PromptMode {
-    Argument,
-    Stdio,
-}
-
-fn prompt_mode_for_args(args: &[String]) -> Result<PromptMode> {
-    let has_prompt_arg = args.iter().any(|arg| arg.contains("{prompt}"));
-    let has_stdio = args.last().is_some_and(|arg| arg == "stdio");
-    match (has_prompt_arg, has_stdio) {
-        (true, false) => Ok(PromptMode::Argument),
-        (false, true) => Ok(PromptMode::Stdio),
-        (true, true) => bail!("agent args must use either {{prompt}} or trailing stdio, not both"),
-        (false, false) => bail!("agent args must contain {{prompt}} or end with stdio"),
-    }
 }
 
 fn agent_task_prompt(prompt: &str) -> String {

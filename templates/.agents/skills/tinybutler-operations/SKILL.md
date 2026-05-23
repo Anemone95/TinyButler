@@ -266,6 +266,14 @@ argument, or end the list with the literal `stdio` placeholder to send the
 prompt through standard input. TinyButler removes the `stdio` placeholder before
 spawning the command.
 
+When starting a chat session, TinyButler shows grouped model references such as
+`codex/gpt-5.5`; the full `group/model` reference is expanded into `{model}`.
+
+For migration compatibility, an old direct entry such as `code_agents.gpt-5.5`
+without a `models` list still resolves as model `gpt-5.5`, and old trailing `-`
+stdin args still work. Prefer explicit groups, `models`, and trailing `stdio`
+for new config.
+
 Common template model names:
 
 - `gemini-3.1-flash-lite`

@@ -63,8 +63,6 @@ pub struct CodeAgentConfig {
 /// Resolved code-agent backend for a requested model name.
 #[derive(Debug, Clone)]
 pub struct ResolvedCodeAgent<'a> {
-    /// Group key under `code_agents`, such as `codex` or `gemini`.
-    pub group: &'a str,
     /// Requested model name from a task or chat selection.
     pub model: String,
     /// Backend command template that supports `model`.
@@ -128,46 +126,58 @@ impl Config {
 
     /// Resolve a model name to its configured code-agent backend.
     pub fn code_agent_for_model(&self, model: &str) -> Option<ResolvedCodeAgent<'_>> {
-        for (group, config) in &self.code_agents {
-            if config.models.iter().any(|configured| configured == model) {
+        if let Some((group, model_name)) = model.split_once('/') {
+            let config = self.code_agents.get(group)?;
+            if config
+                .models
+                .iter()
+                .any(|configured| configured == model_name)
+            {
                 return Some(ResolvedCodeAgent {
-                    group,
+                    model: model.to_string(),
+                    config,
+                });
+            }
+            return None;
+        }
+
+        for (group, config) in &self.code_agents {
+            let legacy_direct_match = config.models.is_empty() && group == model;
+            let configured_model_match = config.models.iter().any(|configured| configured == model);
+            if legacy_direct_match || configured_model_match {
+                return Some(ResolvedCodeAgent {
                     model: model.to_string(),
                     config,
                 });
             }
         }
-
-        self.code_agents
-            .get_key_value(model)
-            .filter(|(_, config)| config.models.is_empty())
-            .map(|(group, config)| ResolvedCodeAgent {
-                group,
-                model: model.to_string(),
-                config,
-            })
+        None
     }
 
-    /// Return all configured model names that have interactive stream args.
+    /// Return all configured model references that have interactive stream args.
     pub fn streaming_model_names(&self) -> Vec<String> {
         let mut models = Vec::new();
         for (group, config) in &self.code_agents {
             if config.stream_args.is_empty() {
                 continue;
             }
-            if config.models.is_empty() {
-                models.push(group.clone());
-            } else {
-                models.extend(config.models.iter().cloned());
-            }
+            models.extend(config.model_references(group));
         }
         models
     }
 
     /// Validate local code-agent command templates.
     pub fn validate_code_agents(&self) -> Result<()> {
+        let mut model_groups = BTreeMap::new();
         for (group, config) in &self.code_agents {
             config.validate_templates(group)?;
+            for model in config.model_names(group) {
+                if let Some(existing_group) = model_groups.insert(model.clone(), group.clone()) {
+                    bail!(
+                        "code_agents model {model} is listed by both {existing_group} and {group}"
+                    );
+                }
+            }
         }
         Ok(())
     }
@@ -182,28 +192,65 @@ impl Config {
 }
 
 impl CodeAgentConfig {
+    /// Return explicit model names, or the group key for legacy direct runners.
+    pub fn model_names(&self, group: &str) -> Vec<String> {
+        if self.models.is_empty() {
+            vec![group.to_string()]
+        } else {
+            self.models.clone()
+        }
+    }
+
+    /// Return chat-facing model references, qualifying grouped models.
+    pub fn model_references(&self, group: &str) -> Vec<String> {
+        if self.models.is_empty() {
+            vec![group.to_string()]
+        } else {
+            self.models
+                .iter()
+                .map(|model| format!("{group}/{model}"))
+                .collect()
+        }
+    }
+
     /// Validate argument templates that run scheduled prompts.
     pub fn validate_templates(&self, group: &str) -> Result<()> {
-        validate_prompt_args(group, "new_args", &self.new_args)?;
-        validate_prompt_args(group, "resume_args", &self.resume_args)
+        validate_optional_prompt_args(group, "new_args", &self.new_args)?;
+        validate_optional_prompt_args(group, "resume_args", &self.resume_args)
     }
 }
 
-fn validate_prompt_args(group: &str, field: &str, args: &[String]) -> Result<()> {
+/// How a scheduled agent command receives its prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptMode {
+    /// The prompt is expanded into an argument containing `{prompt}`.
+    Argument,
+    /// The prompt is written to stdin and trailing `stdio` is not passed.
+    Stdio,
+    /// Legacy templates pass `-` to the process and write the prompt to stdin.
+    LegacyStdio,
+}
+
+/// Infer and validate prompt delivery for one argument template.
+pub(crate) fn prompt_mode_for_args(args: &[String]) -> Result<PromptMode> {
+    let has_prompt_arg = args.iter().any(|arg| arg.contains("{prompt}"));
+    let has_stdio = args.last().is_some_and(|arg| arg == "stdio");
+    let has_legacy_stdin = args.last().is_some_and(|arg| arg == "-");
+    match (has_prompt_arg, has_stdio, has_legacy_stdin) {
+        (true, false, false) => Ok(PromptMode::Argument),
+        (false, true, false) => Ok(PromptMode::Stdio),
+        (false, false, true) => Ok(PromptMode::LegacyStdio),
+        (true, _, _) => bail!("agent args must use either {{prompt}} or trailing stdio, not both"),
+        (false, _, _) => bail!("agent args must contain {{prompt}} or end with stdio"),
+    }
+}
+
+fn validate_optional_prompt_args(group: &str, field: &str, args: &[String]) -> Result<()> {
     if args.is_empty() {
         return Ok(());
     }
-    let has_prompt_arg = args.iter().any(|arg| arg.contains("{prompt}"));
-    let has_stdio = args.last().is_some_and(|arg| arg == "stdio");
-    match (has_prompt_arg, has_stdio) {
-        (true, false) | (false, true) => Ok(()),
-        (true, true) => bail!(
-            "code_agents.{group}.{field} must use either {{prompt}} or trailing stdio, not both"
-        ),
-        (false, false) => {
-            bail!("code_agents.{group}.{field} must contain {{prompt}} or end with stdio")
-        }
-    }
+    prompt_mode_for_args(args).with_context(|| format!("invalid code_agents.{group}.{field}"))?;
+    Ok(())
 }
 
 /// Process metadata written by the daemon and validated by `tinybutler restart`.
@@ -434,8 +481,19 @@ mod tests {
             .code_agent_for_model("gpt-5.5")
             .expect("model should resolve");
 
-        assert_eq!(agent.group, "codex");
         assert_eq!(agent.model, "gpt-5.5");
+        assert_eq!(agent.config.command, "/bin/true");
+    }
+
+    #[test]
+    fn resolves_qualified_chat_model_references() {
+        let config = config_with_agent("codex", &["gpt-5.5"]);
+        let agent = config
+            .code_agent_for_model("codex/gpt-5.5")
+            .expect("qualified model should resolve");
+
+        assert_eq!(agent.model, "codex/gpt-5.5");
+        assert_eq!(agent.config.command, "/bin/true");
     }
 
     #[test]
@@ -446,13 +504,39 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_model_names() {
+        let mut config = config_with_agent("codex", &["gpt-5.5"]);
+        config.code_agents.insert(
+            "backup-codex".to_string(),
+            CodeAgentConfig {
+                command: "/bin/true".to_string(),
+                models: vec!["gpt-5.5".to_string()],
+                ..CodeAgentConfig::default()
+            },
+        );
+
+        let err = config.validate_code_agents().expect_err("duplicate model");
+        assert!(err.to_string().contains("gpt-5.5"));
+    }
+
+    #[test]
     fn supports_legacy_direct_agent_keys_without_models() {
         let config = config_with_agent("gpt-5.5", &[]);
         let agent = config
             .code_agent_for_model("gpt-5.5")
             .expect("legacy direct key should resolve");
 
-        assert_eq!(agent.group, "gpt-5.5");
         assert_eq!(agent.model, "gpt-5.5");
+        assert_eq!(agent.config.command, "/bin/true");
+    }
+
+    #[test]
+    fn accepts_legacy_dash_stdin_marker() {
+        let args = vec!["exec".to_string(), "-".to_string()];
+
+        assert_eq!(
+            prompt_mode_for_args(&args).unwrap(),
+            PromptMode::LegacyStdio
+        );
     }
 }
