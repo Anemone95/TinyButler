@@ -258,6 +258,15 @@ code_agents:
       - "--skip-git-repo-check"
       - "{sessionId}"
       - "{prompt}"
+    stream_args:
+      - app-server
+      - "-c"
+      - model="{model}"
+      - "-c"
+      - sandbox_mode="danger-full-access"
+      - "--listen"
+      - "stdio://"
+      - "{stdin}"
 ```
 
 Place backend model, sandbox, and safety flags only in `code_agents` command
@@ -265,10 +274,12 @@ argument templates. Do not put runner-specific flags in `task.yaml`.
 
 Task `agents` entries are `group/model` references to models listed under
 `code_agents.<group>.models`. TinyButler resolves each reference to its configured
-backend group. In `new_args` and `resume_args`, use `{prompt}` where the prompt
-should be inserted as an argument, or include one literal `{stdin}` argument to
-send the prompt through standard input. TinyButler removes the `{stdin}` marker
-before spawning the command.
+backend group. In `new_args`, `resume_args`, and `stream_args`, use `{prompt}`
+where the prompt should be inserted as an argument, or include one literal
+`{stdin}` argument to send the prompt through standard input. TinyButler removes
+the `{stdin}` marker before spawning scheduled task commands; Codex app-server
+stream configs use `{stdin}` only as the explicit TinyButler prompt-delivery
+marker.
 
 For scheduled task runners, `{model}` is replaced with the unqualified model
 name from the matched `group/model` reference.

@@ -728,6 +728,7 @@ pub fn codex_builder_from_config(
                     bail!("Codex chat bridge only supports --listen stdio://, got {value}");
                 }
             }
+            "{prompt}" | "{stdin}" => {}
             "stdio://" => {}
             other => extra_args.push(other.to_string()),
         }
@@ -1107,6 +1108,7 @@ mod tests {
             "sandbox_mode=\"danger-full-access\"",
             "--listen",
             "stdio://",
+            "{stdin}",
         ]);
         codex_builder_from_config(resolved_codex_config(&config), Some(PathBuf::from("/tmp")))
             .expect("builder");

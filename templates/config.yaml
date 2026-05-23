@@ -37,6 +37,8 @@ code_agents:
       - yolo
       - "--output-format"
       - stream-json
+      - "--prompt"
+      - "{prompt}"
 
   codex:
     command: /usr/bin/codex
@@ -77,3 +79,4 @@ code_agents:
       - sandbox_mode="danger-full-access"
       - "--listen"
       - "stdio://"
+      - "{stdin}"

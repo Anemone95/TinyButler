@@ -61,7 +61,7 @@ The chat bridge session display and tasks configuration use `group_name/model_na
 It is optional for a model group, but only models in a group that has `stream_args` can be listed in the new session command.
 
 `new_args`, `resume_args`, and `stream_args` must contain a placeholder (`{model}`) so the actual task or chat session can choose the model later.
-`new_args` and `resume_args` must also contain either `{prompt}` so the actual task can place the prompt, or a `{stdin}` argument to show that the prompt should be put into standard input.
+They must also contain either `{prompt}` so TinyButler can place the prompt, or a `{stdin}` argument to show that the prompt should be put into standard input.
 `resume_args` must contain `{sessionId}` for `session: reuse` tasks.
 
 

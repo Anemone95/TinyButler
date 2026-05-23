@@ -323,6 +323,12 @@ fn init_stream_runners_include_complete_streaming_flags() {
                 && pair[1].as_str() == Some("yolo")),
         "gemini streaming should include approval mode"
     );
+    assert!(
+        gemini_stream_args.windows(2).any(
+            |pair| pair[0].as_str() == Some("--prompt") && pair[1].as_str() == Some("{prompt}")
+        ),
+        "gemini streaming should include an explicit prompt placeholder"
+    );
 
     let codex_stream_args = config["code_agents"]["codex"]["stream_args"]
         .as_sequence()
@@ -342,6 +348,10 @@ fn init_stream_runners_include_complete_streaming_flags() {
     assert!(
         codex_stream_arg_text.contains(&"sandbox_mode=\"danger-full-access\""),
         "codex streaming should set sandbox mode"
+    );
+    assert!(
+        codex_stream_arg_text.contains(&"{stdin}"),
+        "codex streaming should include an explicit stdin prompt marker"
     );
 }
 

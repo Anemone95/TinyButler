@@ -194,6 +194,7 @@ impl CodeAgentConfig {
         validate_optional_model_args(group, "stream_args", &self.stream_args)?;
         validate_optional_prompt_args(group, "new_args", &self.new_args)?;
         validate_optional_prompt_args(group, "resume_args", &self.resume_args)?;
+        validate_optional_prompt_args(group, "stream_args", &self.stream_args)?;
         validate_resume_args(group, &self.resume_args)?;
         Ok(())
     }
@@ -549,6 +550,27 @@ mod tests {
     }
 
     #[test]
+    fn rejects_resume_args_without_model_placeholder() {
+        let mut config = config_with_agent("codex", &["gpt-5.5"]);
+        config
+            .code_agents
+            .get_mut("codex")
+            .expect("codex config")
+            .resume_args = vec![
+            "exec".to_string(),
+            "resume".to_string(),
+            "{sessionId}".to_string(),
+            "{prompt}".to_string(),
+        ];
+
+        let err = config
+            .validate_code_agents()
+            .expect_err("missing model placeholder should be rejected");
+
+        assert!(err.to_string().contains("resume_args must contain {model}"));
+    }
+
+    #[test]
     fn rejects_resume_args_without_session_placeholder() {
         let mut config = config_with_agent("codex", &["gpt-5.5"]);
         config
@@ -570,6 +592,22 @@ mod tests {
             err.to_string()
                 .contains("resume_args must contain {sessionId}")
         );
+    }
+
+    #[test]
+    fn rejects_stream_args_without_prompt_or_stdin_marker() {
+        let mut config = config_with_agent("codex", &["gpt-5.5"]);
+        config
+            .code_agents
+            .get_mut("codex")
+            .expect("codex config")
+            .stream_args = vec!["app-server".to_string(), "model={model}".to_string()];
+
+        let err = config
+            .validate_code_agents()
+            .expect_err("missing prompt delivery marker should be rejected");
+
+        assert!(format!("{err:#}").contains("must contain {prompt} or {stdin}"));
     }
 
     #[test]
