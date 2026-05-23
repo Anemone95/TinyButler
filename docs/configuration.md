@@ -48,7 +48,7 @@ Code-agent CLI backends are configured under `code_agents.<group>` in local `~/.
 
 Each group entry may define `command`, `new_args`, `resume_args`, `stream_args`, and `models`.
 
-`models` lists the model names that tasks can use. The chat bridge displays grouped model references as `group/model`, for example `codex/gpt-5.5`, and expands that full grouped reference into `{model}`. The default template groups `gemini-3.1-flash-lite` under `gemini`, and `gpt-5.3-codex-spark` plus `gpt-5.5` under `codex`.
+`models` lists the unqualified model names that tasks can use. The chat bridge displays grouped model references as `group/model`, for example `codex/gpt-5.5`, and expands that full grouped reference into `stream_args` `{model}` so the CLI can resolve the intended local config entry. The default template groups `gemini-3.1-flash-lite` under `gemini`, and `gpt-5.3-codex-spark` plus `gpt-5.5` under `codex`.
 
 For migration compatibility, a legacy direct entry such as `code_agents.gpt-5.5` is treated as model `gpt-5.5` when the entry has no `models` list. New configs should prefer grouped backends with explicit `models`.
 
@@ -58,11 +58,11 @@ Scheduled agent tasks use `new_args` for a fresh run.
 
 When `session: reuse` has a previous successful session id, scheduled agent tasks use `resume_args`.
 
-`{model}` is replaced with the selected model reference. For grouped entries this is the full `group/model` value, not only the model suffix.
+For scheduled task runners, `{model}` is replaced with the task `agents` entry that matched config. If a task uses an unqualified model such as `gpt-5.5`, the CLI receives `gpt-5.5`; if it uses a grouped reference such as `codex/gpt-5.5`, the CLI receives that full reference.
 
-`{prompt}` is replaced with the task prompt plus TinyButler runtime context when a runner needs prompt-in-args. Otherwise, `new_args` or `resume_args` must end with the literal `stdio` placeholder, which TinyButler removes before spawning the command and uses to send the prompt through standard input.
+`{prompt}` is replaced with the task prompt plus TinyButler runtime context when a runner needs prompt-in-args. Otherwise, `new_args` or `resume_args` must end with the literal `stdin` placeholder, which TinyButler removes before spawning the command and uses to send the prompt through standard input.
 
-Existing configs that used a trailing `-` argument for stdin continue to work, but new configs should use the explicit trailing `stdio` placeholder.
+Existing configs that used a trailing `stdio` or `-` argument for stdin continue to work, but new configs should use the explicit trailing `stdin` placeholder.
 
 `{sessionId}` is replaced with the previous successful session id for `session: reuse`.
 

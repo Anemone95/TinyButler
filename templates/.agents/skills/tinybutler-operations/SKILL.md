@@ -243,7 +243,7 @@ code_agents:
       - "{model}"
       - "--skip-git-repo-check"
       - "-"
-      - stdio
+      - stdin
     resume_args:
       - exec
       - resume
@@ -253,7 +253,7 @@ code_agents:
       - "{model}"
       - "--skip-git-repo-check"
       - "-"
-      - stdio
+      - stdin
 ```
 
 Place backend model, sandbox, and safety flags only in `code_agents` command
@@ -262,16 +262,21 @@ argument templates. Do not put runner-specific flags in `task.yaml`.
 Task `agents` entries name models from `code_agents.<group>.models`; TinyButler
 resolves each model to its configured backend group. In `new_args` and
 `resume_args`, use `{prompt}` where the prompt should be inserted as an
-argument, or end the list with the literal `stdio` placeholder to send the
-prompt through standard input. TinyButler removes the `stdio` placeholder before
+argument, or end the list with the literal `stdin` placeholder to send the
+prompt through standard input. TinyButler removes the `stdin` placeholder before
 spawning the command.
 
+For scheduled task runners, `{model}` is replaced with the task `agents` entry
+that matched config. Unqualified task entries pass unqualified model names to
+the CLI; grouped task entries pass the full `group/model` reference.
+
 When starting a chat session, TinyButler shows grouped model references such as
-`codex/gpt-5.5`; the full `group/model` reference is expanded into `{model}`.
+`codex/gpt-5.5`; the full `group/model` reference is expanded into `stream_args`
+`{model}`.
 
 For migration compatibility, an old direct entry such as `code_agents.gpt-5.5`
-without a `models` list still resolves as model `gpt-5.5`, and old trailing `-`
-stdin args still work. Prefer explicit groups, `models`, and trailing `stdio`
+without a `models` list still resolves as model `gpt-5.5`, and old trailing
+`stdio` or `-` stdin args still work. Prefer explicit groups, `models`, and trailing `stdin`
 for new config.
 
 Common template model names:

@@ -267,8 +267,8 @@ async fn run_agent_command(
 
     let prompt_mode = prompt_mode_for_args(args)?;
     let command_args = match prompt_mode {
-        PromptMode::Stdio => &args[..args.len() - 1],
-        PromptMode::Argument | PromptMode::LegacyStdio => args,
+        PromptMode::Stdin | PromptMode::LegacyStdio => &args[..args.len() - 1],
+        PromptMode::Argument | PromptMode::LegacyDash => args,
     };
     for arg in command_args {
         command.arg(expand_agent_arg(
@@ -280,8 +280,11 @@ async fn run_agent_command(
         ));
     }
 
-    let stdin_text = matches!(prompt_mode, PromptMode::Stdio | PromptMode::LegacyStdio)
-        .then(|| prompt.to_string());
+    let stdin_text = matches!(
+        prompt_mode,
+        PromptMode::Stdin | PromptMode::LegacyStdio | PromptMode::LegacyDash
+    )
+    .then(|| prompt.to_string());
     run_command(command, stdin_text, task.timeout).await
 }
 
@@ -508,7 +511,7 @@ mod tests {
                 new_args: vec![
                     "-c".to_string(),
                     "printf 'first failed\\n'; printf 'bad agent\\n' >&2; exit 7".to_string(),
-                    "stdio".to_string(),
+                    "stdin".to_string(),
                 ],
                 models: vec!["fail-agent".to_string()],
                 ..Default::default()
@@ -521,7 +524,7 @@ mod tests {
                 new_args: vec![
                     "-c".to_string(),
                     "cat >/dev/null; printf '{\"session_id\":\"session-ok\"}\\n'".to_string(),
-                    "stdio".to_string(),
+                    "stdin".to_string(),
                 ],
                 models: vec!["success-agent".to_string()],
                 ..Default::default()

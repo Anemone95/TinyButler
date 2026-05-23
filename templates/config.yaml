@@ -56,7 +56,7 @@ code_agents:
       - service_tier="fast"
       - "--skip-git-repo-check"
       - "-"
-      - stdio
+      - stdin
     resume_args:
       - exec
       - resume
@@ -70,7 +70,7 @@ code_agents:
       - service_tier="fast"
       - "--skip-git-repo-check"
       - "-"
-      - stdio
+      - stdin
     stream_args:
       - app-server
       - "-c"

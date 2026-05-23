@@ -16,7 +16,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-use crate::config::{write_daemon_pid_record, Config};
+use crate::config::{prompt_mode_for_args, write_daemon_pid_record, Config};
 use crate::cron_expr::next_run_after as cron_next_run_after;
 pub use crate::cron_expr::{describe_schedule, format_schedule_for_display, normalize_cron};
 use crate::lock::TaskLock;
@@ -159,13 +159,19 @@ impl Scheduler {
                     bail!("agent task {} requires {}", task.name, prompt.display());
                 }
                 for runner in task.agent_runner_keys() {
-                    if self.config.code_agent_for_model(runner).is_none() {
-                        bail!(
+                    let agent = self.config.code_agent_for_model(runner).ok_or_else(|| {
+                        anyhow!(
                             "agent task {} references missing code_agents model {} in config.yaml",
                             task.name,
                             runner
-                        );
-                    }
+                        )
+                    })?;
+                    prompt_mode_for_args(&agent.config.new_args).with_context(|| {
+                        format!(
+                            "agent task {} references non-runnable code_agents model {}",
+                            task.name, runner
+                        )
+                    })?;
                 }
             }
         }

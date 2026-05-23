@@ -127,18 +127,17 @@ impl Config {
     /// Resolve a model name to its configured code-agent backend.
     pub fn code_agent_for_model(&self, model: &str) -> Option<ResolvedCodeAgent<'_>> {
         if let Some((group, model_name)) = model.split_once('/') {
-            let config = self.code_agents.get(group)?;
-            if config
-                .models
-                .iter()
-                .any(|configured| configured == model_name)
-            {
+            if let Some(config) = self.code_agents.get(group).filter(|config| {
+                config
+                    .models
+                    .iter()
+                    .any(|configured| configured == model_name)
+            }) {
                 return Some(ResolvedCodeAgent {
                     model: model.to_string(),
                     config,
                 });
             }
-            return None;
         }
 
         for (group, config) in &self.code_agents {
@@ -213,6 +212,19 @@ impl CodeAgentConfig {
         }
     }
 
+    /// True when `model` matches one chat-facing reference from this group.
+    pub fn has_model_reference(&self, group: &str, model: &str) -> bool {
+        if self.models.is_empty() {
+            return group == model;
+        }
+
+        model
+            .split_once('/')
+            .is_some_and(|(model_group, model_name)| {
+                model_group == group && self.models.iter().any(|model| model == model_name)
+            })
+    }
+
     /// Validate argument templates that run scheduled prompts.
     pub fn validate_templates(&self, group: &str) -> Result<()> {
         validate_optional_prompt_args(group, "new_args", &self.new_args)?;
@@ -225,23 +237,29 @@ impl CodeAgentConfig {
 pub(crate) enum PromptMode {
     /// The prompt is expanded into an argument containing `{prompt}`.
     Argument,
-    /// The prompt is written to stdin and trailing `stdio` is not passed.
-    Stdio,
-    /// Legacy templates pass `-` to the process and write the prompt to stdin.
+    /// The prompt is written to stdin and trailing `stdin` is not passed.
+    Stdin,
+    /// Old templates used `stdio` for stdin prompt delivery.
     LegacyStdio,
+    /// Legacy templates pass `-` to the process and write the prompt to stdin.
+    LegacyDash,
 }
 
 /// Infer and validate prompt delivery for one argument template.
 pub(crate) fn prompt_mode_for_args(args: &[String]) -> Result<PromptMode> {
     let has_prompt_arg = args.iter().any(|arg| arg.contains("{prompt}"));
+    let has_stdin = args.last().is_some_and(|arg| arg == "stdin");
     let has_stdio = args.last().is_some_and(|arg| arg == "stdio");
-    let has_legacy_stdin = args.last().is_some_and(|arg| arg == "-");
-    match (has_prompt_arg, has_stdio, has_legacy_stdin) {
-        (true, false, false) => Ok(PromptMode::Argument),
-        (false, true, false) => Ok(PromptMode::Stdio),
-        (false, false, true) => Ok(PromptMode::LegacyStdio),
-        (true, _, _) => bail!("agent args must use either {{prompt}} or trailing stdio, not both"),
-        (false, _, _) => bail!("agent args must contain {{prompt}} or end with stdio"),
+    let has_legacy_dash = args.last().is_some_and(|arg| arg == "-");
+    match (has_prompt_arg, has_stdin, has_stdio, has_legacy_dash) {
+        (true, false, false, false) => Ok(PromptMode::Argument),
+        (false, true, false, false) => Ok(PromptMode::Stdin),
+        (false, false, true, false) => Ok(PromptMode::LegacyStdio),
+        (false, false, false, true) => Ok(PromptMode::LegacyDash),
+        (true, _, _, _) => {
+            bail!("agent args must use either {{prompt}} or trailing stdin, not both")
+        }
+        (false, _, _, _) => bail!("agent args must contain {{prompt}} or end with stdin"),
     }
 }
 
@@ -497,6 +515,17 @@ mod tests {
     }
 
     #[test]
+    fn resolves_real_model_names_that_contain_slashes() {
+        let config = config_with_agent("codex", &["openai/gpt-4.1"]);
+        let agent = config
+            .code_agent_for_model("openai/gpt-4.1")
+            .expect("slash-containing model should resolve by exact model name");
+
+        assert_eq!(agent.model, "openai/gpt-4.1");
+        assert_eq!(agent.config.command, "/bin/true");
+    }
+
+    #[test]
     fn grouped_agent_key_is_not_a_model_name() {
         let config = config_with_agent("codex", &["gpt-5.5"]);
 
@@ -534,9 +563,13 @@ mod tests {
     fn accepts_legacy_dash_stdin_marker() {
         let args = vec!["exec".to_string(), "-".to_string()];
 
-        assert_eq!(
-            prompt_mode_for_args(&args).unwrap(),
-            PromptMode::LegacyStdio
-        );
+        assert_eq!(prompt_mode_for_args(&args).unwrap(), PromptMode::LegacyDash);
+    }
+
+    #[test]
+    fn accepts_stdin_prompt_marker() {
+        let args = vec!["exec".to_string(), "stdin".to_string()];
+
+        assert_eq!(prompt_mode_for_args(&args).unwrap(), PromptMode::Stdin);
     }
 }

@@ -171,7 +171,7 @@ impl Drop for ChatLock {
     }
 }
 
-/// Return model names supported by the current Codex chat adapter.
+/// Return model references supported by the current Codex chat adapter.
 pub fn codex_streaming_model_names(config: &Config) -> Vec<String> {
     let mut models = Vec::new();
     for (group, agent) in &config.code_agents {
@@ -180,6 +180,13 @@ pub fn codex_streaming_model_names(config: &Config) -> Vec<String> {
         }
     }
     models
+}
+
+/// True when `model` is a chat-selectable Codex model reference.
+pub fn is_codex_streaming_model(config: &Config, model: &str) -> bool {
+    config.code_agents.iter().any(|(group, agent)| {
+        codex_chat_supported(agent) && agent.has_model_reference(group, model)
+    })
 }
 
 /// True when a runner can be handled by `CodexChatAgent`.

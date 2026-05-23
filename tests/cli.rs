@@ -189,7 +189,7 @@ fn init_refreshes_repo_scoped_operation_skill() {
 }
 
 #[test]
-fn init_codex_group_reads_prompt_from_stdio_and_emit_json() {
+fn init_codex_group_reads_prompt_from_stdin_and_emit_json() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
@@ -218,10 +218,75 @@ fn init_codex_group_reads_prompt_from_stdio_and_emit_json() {
         );
         assert_eq!(
             args.last().and_then(|value| value.as_str()),
-            Some("stdio"),
+            Some("stdin"),
             "codex {field} should mark prompt delivery through stdin"
         );
     }
+}
+
+#[test]
+fn check_rejects_agent_config_without_prompt_or_stdin() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let config_text = std::fs::read_to_string(home.join("config.yaml"))
+        .expect("read config")
+        .replace("      - stdin", "      - --no-prompt-placeholder");
+    std::fs::write(home.join("config.yaml"), config_text).expect("write config");
+
+    let check = run_tinybutler(home, &["check"]);
+    assert!(
+        !check.status.success(),
+        "check should reject agent args without prompt or stdin"
+    );
+    let error = stderr(&check);
+    assert!(
+        error.contains("must contain {prompt} or end with stdin"),
+        "stderr should explain prompt delivery requirement: {error}"
+    );
+}
+
+#[test]
+fn check_rejects_referenced_agent_with_empty_new_args() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    std::fs::write(
+        home.join("config.yaml"),
+        r#"telegram:
+  bot_token: null
+  chat_id: null
+
+code_agents:
+  codex:
+    command: /bin/true
+    models:
+      - gpt-5.3-codex-spark
+    new_args: []
+"#,
+    )
+    .expect("write config");
+
+    let check = run_tinybutler(home, &["check"]);
+    assert!(
+        !check.status.success(),
+        "check should reject task-referenced agent models without runnable new_args"
+    );
+    let error = stderr(&check);
+    assert!(
+        error.contains("non-runnable code_agents model gpt-5.3-codex-spark"),
+        "stderr should mention the non-runnable model: {error}"
+    );
+    assert!(
+        error.contains("must contain {prompt} or end with stdin"),
+        "stderr should explain prompt delivery requirement: {error}"
+    );
 }
 
 #[test]
