@@ -48,31 +48,22 @@ Code-agent CLI backends are configured under `code_agents.<group>` in local `~/.
 
 Each group entry may define `command`, `new_args`, `resume_args`, `stream_args`, and `models`.
 
-`models` lists the unqualified model names that tasks can use. The chat bridge displays grouped model references as `group/model`, for example `codex/gpt-5.5`, and expands that full grouped reference into `stream_args` `{model}` so the CLI can resolve the intended local config entry. The default template groups `gemini-3.1-flash-lite` under `gemini`, and `gpt-5.3-codex-spark` plus `gpt-5.5` under `codex`.
+`command` shows the agent CLI.
 
-For migration compatibility, a legacy direct entry such as `code_agents.gpt-5.5` is treated as model `gpt-5.5` when the entry has no `models` list. New configs should prefer grouped backends with explicit `models`.
+`models` lists the unqualified model names that tasks can use.
+The chat bridge session display and tasks configuration use `group_name/model_name`, for example `codex/gpt-5.5`.
 
-## Scheduled Agent Arguments
+`new_args` is used for creating a session for a `session: reuse` task's first run or each run of a `session: independent` task.
 
-Scheduled agent tasks use `new_args` for a fresh run.
+`resume_args` is used for running a `session: reuse` task in a previous session id.
 
-When `session: reuse` has a previous successful session id, scheduled agent tasks use `resume_args`.
+`stream_args` is used for the chat interface, where the chat bridge can output tokens as a stream.
+It is optional for a model group, but only models in a group that has `stream_args` can be listed in the new session command.
 
-For scheduled task runners, `{model}` is replaced with the task `agents` entry that matched config. If a task uses an unqualified model such as `gpt-5.5`, the CLI receives `gpt-5.5`; if it uses a grouped reference such as `codex/gpt-5.5`, the CLI receives that full reference.
+`new_args`, `resume_args`, and `stream_args` must contain a placeholder (`{model}`) so the actual task can choose the model later.
+They must also contain either `{prompt}` so the actual task can place the prompt, or `{stdin}` to show that the prompt should be put into standard input.
+`resume_args` must contain `{sessionId}` for `session: reuse` tasks.
 
-`{prompt}` is replaced with the task prompt plus TinyButler runtime context when a runner needs prompt-in-args. Otherwise, `new_args` or `resume_args` must end with the literal `stdin` placeholder, which TinyButler removes before spawning the command and uses to send the prompt through standard input.
-
-Existing configs that used a trailing `stdio` or `-` argument for stdin continue to work, but new configs should use the explicit trailing `stdin` placeholder.
-
-`{sessionId}` is replaced with the previous successful session id for `session: reuse`.
-
-If no previous session id exists, the first `session: reuse` run starts a new session with `new_args`.
-
-## Streaming Agent Arguments
-
-`stream_args` is used by interactive chat bridge runners.
-
-`stream_args` should be complete for that runner, including model, sandbox or approval policy, and streaming output mode when the CLI requires them; it must not inherit those settings from `new_args`.
 
 A runner supports interactive streaming when it has `stream_args` or a dedicated Rust stream adapter.
 

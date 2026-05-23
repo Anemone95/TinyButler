@@ -48,7 +48,7 @@ Task configs must not define `workspace`, `notify`, `concurrency`, or runner CLI
 
 ## Command Tasks
 
-Command tasks use `type: command` and execute `run.sh` through shell.
+Command tasks use `type: command` and execute `run.sh` through a shell.
 
 ```yaml
 name: regular-check
@@ -67,7 +67,7 @@ name: smoke-task
 enabled: false
 schedule: "0 9 * * *"
 agents:
-  - gpt-5.3-codex-spark
+  - codex/gpt-5.3-codex-spark
 type: agent
 session: independent
 timeout: 3600
@@ -75,7 +75,7 @@ timeout: 3600
 
 Agent task fields:
 
-- `agents`: a required ordered list of model names listed under `code_agents.<group>.models` in `~/.tinybutler/config.yaml`. TinyButler resolves each model to its configured backend group, tries them in order, and records task failure only after the final agent fails.
+- `agents`: a required ordered list of model names listed under `code_agents.<group>.models` in `~/.tinybutler/config.yaml`. TinyButler resolves each group and model to its configured backend, tries them in order, and records task failure only after the final agent fails.
 - `session`: `independent` starts a fresh session; `reuse` resumes the previous successful session when the runner supports it.
 
 Agent runner configuration, session placeholders, and sandbox/model flags are owned by [configuration.md](configuration.md).
@@ -94,32 +94,33 @@ Task behavior starts from local CLI commands. TinyButler provides a task selecto
 
 `/tasks` shows the same task list as Telegram buttons. Selecting a task opens the task detail view.
 
-After a task is selected, TinyButler first shows task details formatted as Markdown from the parsed task definition, including name, enabled state, type, agents, schedule, timeout, and session mode. It must not show raw task definition, prompt, or script file contents in the Telegram task menu.
+After a task is selected, TinyButler first shows task details formatted as Markdown from the `task.yaml`, including name, enabled state, type, schedule (human-readable schedule description from `croner`), timeout, session mode, and description (100 words from either `agent.md` or `run.sh`).
 
 The selected-task view then offers these actions:
 
-- `status`: show only formatted runtime state fields and a latest-log preview when available.
+- `status`: show only formatted runtime state fields (from `state.json`) and a latest-log preview when available. The preview is intended for quick scanning: logs longer than 14 lines show the first seven lines, an ellipsis line, and the last seven lines, and each displayed line is truncated to 80 characters with an ellipsis.
 - `run`: run the selected task once.
 - `enable`: show only when the task is disabled; set `enabled: true`.
 - `disable`: show only when the task is enabled; set `enabled: false`.
 
-In CLI or agent environments, use `tinybutler task list` for a stable task summary and `tinybutler task status <task>` for current state and latest-log preview. The preview is intended for quick scanning: logs longer than 14 lines show the first seven lines, an ellipsis line, and the last seven lines, and each displayed line is truncated to 80 characters with an ellipsis. Task-owned files can also be inspected directly from `~/.tinybutler/tasks/<task-name>/` when lower-level file access is useful.
+In CLI environments, the `tinybutler task list` result is like `/task`, but without a selector.
+`tinybutler task status <task>` has the same output as `/task` -> `status`.
+Task-owned files can also be inspected directly from `~/.tinybutler/tasks/<task-name>/` when lower-level file access is useful.
 
 ## Scheduler Loop
 
-The daemon uses a periodic scan model. On startup it scans `tasks/*/task.yaml` while reconciling startup schedules, then enters the scheduler loop.
+The daemon uses a periodic scan model. On startup, it scans `tasks/*/task.yaml` while reconciling startup schedules, then enters the scheduler loop.
 
 Each scheduler tick re-scans `tasks/*/task.yaml` before due checks. The default tick interval is 30 seconds and can be changed with `tinybutler daemon --interval-seconds <seconds>`.
 
-Adding, removing, or editing task directories while the daemon is running is picked up on the next tick. Task updates do not require restarting the daemon.
+Adding, removing, or editing task directories while the daemon is running is picked up on the next tick. Task creation, deletion, and modification do not require restarting the daemon.
 
-Use `tinybutler restart` after editing local `config.yaml` or when you want a clean service restart. It first validates config, task schemas, task-owned execution files, and agent runner references. If validation succeeds, it signals the running daemon to re-exec itself in place without calling `systemctl restart`. If validation fails, it reports the error and does not signal the daemon.
 
 CLI commands such as `tinybutler check`, `tinybutler tasks`, `tinybutler task list`, and `tinybutler task status <task>` read the relevant files directly when invoked.
 
-On each scheduler tick, the daemon validates task schema, decides whether a task is due, locks the task directory, runs `agent.md` or `run.sh`, writes stdout and stderr to `logs/`, updates `state.json`, and sends Telegram notification when notification rules require it.
+On each scheduler tick, the daemon validates the task schema, decides whether a task is due, locks the task directory, runs `agent.md` or `run.sh`, writes stdout and stderr to `logs/`, updates `state.json`, and sends a Telegram notification when notification rules require it.
 
-For agent tasks with `agents`, the daemon tries each configured runner in list order. A non-zero exit status, spawn failure, timeout, or missing runtime config for one runner moves execution to the next runner. All attempts are written into the same run log. A successful fallback attempt makes the whole task run successful, so the daemon does not send its failure Telegram notification unless every configured agent fails.
+For agent tasks with `agents`, the daemon tries each configured runner in list order. A non-zero exit status, spawn failure, timeout, or missing runtime config for one runner moves execution to the next runner. All attempts are written into the same run log. A successful fallback attempt makes the whole task run successfully, so the daemon does not send its failure Telegram notification unless every configured agent fails.
 
 Task runner processes receive `TINYBUTLER_TASK_NAME` in their environment. Shell scripts and agent tasks that send their own Telegram messages should pass this through with `tinybutler telegram --task "$TINYBUTLER_TASK_NAME" ...` so the outgoing message carries task context for later Telegram replies and debugging.
 
