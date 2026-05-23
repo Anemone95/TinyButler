@@ -8,30 +8,30 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::Local;
-use reqwest::multipart::{Form, Part};
 use reqwest::Client;
+use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use telegram_markdown_v2::{convert_with_strategy, UnsupportedTagsStrategy};
+use telegram_markdown_v2::{UnsupportedTagsStrategy, convert_with_strategy};
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::oneshot;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 
 use crate::chat::{
-    chat_working_directory, codex_streaming_model_names, is_codex_streaming_model,
-    load_recovered_chat_state, mark_chat_inactive, mark_turn_finished, mark_turn_started,
     ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatSession, ChatStateValue,
-    CodexChatAgent,
+    CodexChatAgent, chat_working_directory, codex_streaming_model_names, is_codex_streaming_model,
+    load_recovered_chat_state, mark_chat_inactive, mark_turn_finished, mark_turn_started,
 };
-use crate::config::{read_daemon_pid_record, Config, DaemonPidRecord};
+use crate::config::{Config, DaemonPidRecord, read_daemon_pid_record};
 use crate::scheduler::Scheduler;
 
 /// Telegram parse mode used by TinyButler-generated and CLI-authored messages.
 pub const TELEGRAM_PARSE_MODE: &str = "MarkdownV2";
+const TELEGRAM_SESSION_PAGE_SIZE: usize = 5;
 
 /// Build the daemon startup notification sent when Telegram is configured.
 pub fn daemon_startup_notification_text(config: &Config) -> String {
@@ -420,27 +420,7 @@ async fn handle_session_command(config: &Config, chat_id: &str) -> Result<()> {
         return send_markdown_text_to_chat(config, chat_id, "No resumable chat sessions").await;
     }
     set_telegram_selection_state(config, ChatStateValue::SelectingSession).await?;
-    send_inline_menu(
-        config,
-        chat_id,
-        "Select a session:",
-        sessions
-            .iter()
-            .filter(|session| session.session_id.len() <= 51)
-            .map(|session| {
-                let title = session.title.as_deref().unwrap_or("(untitled)");
-                (
-                    format!(
-                        "{} {}",
-                        session.runner,
-                        truncate(title, 28).replace('\n', " ")
-                    ),
-                    format!("tc_session:{}", session.session_id),
-                )
-            })
-            .collect(),
-    )
-    .await
+    send_session_page_menu(config, chat_id, &sessions, 0).await
 }
 
 async fn handle_task_callback(config: &Config, chat_id: &str, task_data: &str) -> Result<()> {
@@ -749,8 +729,11 @@ async fn handle_callback(config: &Config, callback: &TelegramCallbackQuery) -> R
     if let Some(runner) = data.strip_prefix("tc_new:") {
         return handle_new_callback(config, &chat_id, runner).await;
     }
-    if let Some(session_id) = data.strip_prefix("tc_session:") {
-        return handle_session_callback(config, &chat_id, session_id).await;
+    if let Some(session_data) = data.strip_prefix("tc_session:") {
+        return handle_session_callback(config, &chat_id, session_data).await;
+    }
+    if let Some(offset) = data.strip_prefix("tc_sessions_more:") {
+        return handle_session_more_callback(config, &chat_id, offset).await;
     }
     if let Some(task_data) = data.strip_prefix("tb_task:") {
         return handle_task_callback(config, &chat_id, task_data).await;
@@ -808,24 +791,34 @@ async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Re
     .await
 }
 
-async fn handle_session_callback(config: &Config, chat_id: &str, session_id: &str) -> Result<()> {
+async fn handle_session_more_callback(config: &Config, chat_id: &str, offset: &str) -> Result<()> {
+    let offset = parse_session_page_offset(offset)?;
     let state = load_recovered_chat_state(config).await?;
     if state.state != ChatStateValue::SelectingSession {
         return send_markdown_text_to_chat(config, chat_id, "Stale session selection").await;
     }
-    let session = state
-        .sessions
-        .iter()
-        .find(|session| session.session_id == session_id)
-        .cloned()
-        .with_context(|| format!("unknown chat session {session_id}"))?;
+    let sessions = state.sessions_newest_first();
+    if sessions.is_empty() {
+        return send_markdown_text_to_chat(config, chat_id, "No resumable chat sessions").await;
+    }
+    send_session_page_menu(config, chat_id, &sessions, offset).await
+}
+
+async fn handle_session_callback(config: &Config, chat_id: &str, session_data: &str) -> Result<()> {
+    let state = load_recovered_chat_state(config).await?;
+    if state.state != ChatStateValue::SelectingSession {
+        return send_markdown_text_to_chat(config, chat_id, "Stale session selection").await;
+    }
+    let sessions = state.sessions_newest_first();
+    let selection = parse_session_callback_data(session_data)?;
+    let session = session_for_callback_selection(&sessions, selection)?;
     let agent_config = config
         .code_agent_for_model(&session.runner)
         .with_context(|| format!("missing code_agents model {}", session.runner))?;
     if !claim_telegram_selection(
         config,
         ChatStateValue::SelectingSession,
-        format!("callback:session:{session_id}"),
+        format!("callback:session:{}", session.session_id),
     )
     .await?
     {
@@ -839,7 +832,7 @@ async fn handle_session_callback(config: &Config, chat_id: &str, session_id: &st
             ChatInstructionContext::Telegram,
         )
         .await?;
-        agent.resume_session(session_id).await
+        agent.resume_session(&session.session_id).await
     }
     .await;
     let session = match session_result {
@@ -860,6 +853,104 @@ async fn handle_session_callback(config: &Config, chat_id: &str, session_id: &st
         ),
     )
     .await
+}
+
+async fn send_session_page_menu(
+    config: &Config,
+    chat_id: &str,
+    sessions: &[ChatSession],
+    offset: usize,
+) -> Result<()> {
+    let buttons = session_page_buttons(sessions, offset);
+    if buttons.is_empty() {
+        return send_markdown_text_to_chat(config, chat_id, "No more resumable chat sessions")
+            .await;
+    }
+    send_inline_menu(config, chat_id, "Select a session:", buttons).await
+}
+
+fn session_page_buttons(sessions: &[ChatSession], offset: usize) -> Vec<(String, String)> {
+    let mut buttons = sessions
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(TELEGRAM_SESSION_PAGE_SIZE)
+        .map(session_menu_button)
+        .collect::<Vec<_>>();
+
+    if let Some(next_offset) = offset.checked_add(TELEGRAM_SESSION_PAGE_SIZE)
+        && next_offset < sessions.len()
+    {
+        buttons.push((
+            "Show more".to_string(),
+            format!("tc_sessions_more:{next_offset}"),
+        ));
+    }
+    buttons
+}
+
+fn session_menu_button((index, session): (usize, &ChatSession)) -> (String, String) {
+    let title = session.title.as_deref().unwrap_or("(untitled)");
+    (
+        format!(
+            "{} {}",
+            session.runner,
+            truncate(title, 28).replace('\n', " ")
+        ),
+        format!(
+            "tc_session:{index}:{}",
+            session_selector_fingerprint(&session.session_id)
+        ),
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionCallbackSelection {
+    index: usize,
+    fingerprint: String,
+}
+
+fn parse_session_callback_data(data: &str) -> Result<SessionCallbackSelection> {
+    let Some((index_text, fingerprint)) = data.split_once(':') else {
+        bail!("invalid session selection callback");
+    };
+    let index = index_text
+        .parse::<usize>()
+        .with_context(|| format!("invalid session selection index: {index_text}"))?;
+    if !valid_task_fingerprint(fingerprint) {
+        bail!("invalid session selection fingerprint");
+    }
+    Ok(SessionCallbackSelection {
+        index,
+        fingerprint: fingerprint.to_string(),
+    })
+}
+
+fn parse_session_page_offset(offset: &str) -> Result<usize> {
+    let offset = offset
+        .parse::<usize>()
+        .with_context(|| format!("invalid session page offset: {offset}"))?;
+    if offset == 0 || offset % TELEGRAM_SESSION_PAGE_SIZE != 0 {
+        bail!("invalid session page offset: {offset}");
+    }
+    Ok(offset)
+}
+
+fn session_for_callback_selection(
+    sessions: &[ChatSession],
+    selection: SessionCallbackSelection,
+) -> Result<ChatSession> {
+    let session = sessions
+        .get(selection.index)
+        .with_context(|| format!("unknown chat session index {}", selection.index))?;
+    if session_selector_fingerprint(&session.session_id) != selection.fingerprint {
+        bail!("stale chat session selection");
+    }
+    Ok(session.clone())
+}
+
+fn session_selector_fingerprint(session_id: &str) -> String {
+    task_selector_fingerprint(session_id)
 }
 
 async fn run_telegram_chat_turn(
@@ -2030,6 +2121,17 @@ fn longest_backtick_run(text: &str) -> usize {
 mod tests {
     use super::*;
 
+    fn test_sessions(count: usize) -> Vec<ChatSession> {
+        (0..count)
+            .map(|index| ChatSession {
+                runner: "codex".to_string(),
+                session_id: format!("session-{index}"),
+                title: Some(format!("title-{index}")),
+                last_activity_at: Local::now() - chrono::Duration::minutes(index as i64),
+            })
+            .collect()
+    }
+
     #[test]
     fn help_text_is_common_markdown_and_renders_to_markdown_v2() {
         let text = help_text();
@@ -2068,10 +2170,12 @@ mod tests {
             vec!["new", "session", "abort", "tasks", "restart", "help"]
         );
         for command in commands {
-            assert!(command
-                .command
-                .chars()
-                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_'));
+            assert!(
+                command
+                    .command
+                    .chars()
+                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+            );
             assert!(!command.description.contains("TickClaw"));
             assert!(!command.description.contains("tickclaw"));
             assert!(!command.description.contains("TinyButler"));
@@ -2225,6 +2329,80 @@ mod tests {
     fn inline_menu_text_limit_accounts_for_markdown_v2_expansion() {
         assert!(inline_menu_text_fits("short **menu**"));
         assert!(!inline_menu_text_fits(&"x_y".repeat(1000)));
+    }
+
+    #[test]
+    fn session_page_buttons_show_five_sessions_then_more() {
+        let sessions = test_sessions(12);
+        let fingerprint = session_selector_fingerprint("session-0");
+
+        let buttons = session_page_buttons(&sessions, 0);
+
+        assert_eq!(buttons.len(), 6);
+        assert_eq!(buttons[0].0, "codex title-0");
+        assert_eq!(buttons[0].1, format!("tc_session:0:{fingerprint}"));
+        assert_eq!(
+            buttons.last().expect("show more button"),
+            &("Show more".to_string(), "tc_sessions_more:5".to_string())
+        );
+    }
+
+    #[test]
+    fn session_page_buttons_omit_more_on_final_page() {
+        let sessions = test_sessions(12);
+        let session_10_fingerprint = session_selector_fingerprint("session-10");
+        let session_11_fingerprint = session_selector_fingerprint("session-11");
+
+        let buttons = session_page_buttons(&sessions, 10);
+
+        assert_eq!(buttons.len(), 2);
+        assert_eq!(
+            buttons[0].1,
+            format!("tc_session:10:{session_10_fingerprint}")
+        );
+        assert_eq!(
+            buttons[1].1,
+            format!("tc_session:11:{session_11_fingerprint}")
+        );
+        assert!(!buttons.iter().any(|(label, _)| label == "Show more"));
+    }
+
+    #[test]
+    fn session_page_buttons_keep_long_session_ids_out_of_callback_data() {
+        let mut sessions = test_sessions(1);
+        sessions[0].session_id = "x".repeat(200);
+
+        let buttons = session_page_buttons(&sessions, 0);
+
+        assert_eq!(buttons.len(), 1);
+        assert!(buttons[0].1.starts_with("tc_session:0:"));
+        assert!(buttons[0].1.len() < 64);
+        assert!(!buttons[0].1.contains(&sessions[0].session_id));
+    }
+
+    #[test]
+    fn parses_and_rejects_session_callback_data() {
+        let fingerprint = session_selector_fingerprint("session-7");
+        let callback = format!("7:{fingerprint}");
+
+        assert_eq!(
+            parse_session_callback_data(&callback).expect("callback data"),
+            SessionCallbackSelection {
+                index: 7,
+                fingerprint,
+            }
+        );
+        assert!(callback.len() < 64);
+        assert!(parse_session_callback_data("missing-fingerprint").is_err());
+        assert!(parse_session_callback_data("0:not-hex").is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_session_more_offsets() {
+        assert_eq!(parse_session_page_offset("5").expect("offset"), 5);
+        assert!(parse_session_page_offset("0").is_err());
+        assert!(parse_session_page_offset("4").is_err());
+        assert!(parse_session_page_offset("not-number").is_err());
     }
 
     #[test]

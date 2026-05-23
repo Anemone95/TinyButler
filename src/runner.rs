@@ -7,14 +7,14 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::Local;
 use serde_json::Value;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use crate::config::{prompt_mode_for_args, Config, PromptMode, ResolvedCodeAgent};
+use crate::config::{Config, PromptMode, ResolvedCodeAgent, prompt_mode_for_args};
 use crate::state::TaskState;
 use crate::task::{SessionMode, Task, TaskType};
 
@@ -229,21 +229,20 @@ async fn run_code_agent(
     let agent = config
         .code_agent_for_model(model_name)
         .with_context(|| format!("missing code_agents model {model_name} in config.yaml"))?;
-    if task.session == SessionMode::Reuse {
-        if let Some(session_id) = reusable_session_id(state, model_name) {
-            if !agent.config.resume_args.is_empty() {
-                let mut output = run_agent_command(
-                    &agent,
-                    &agent.config.resume_args,
-                    task,
-                    prompt,
-                    Some(session_id),
-                )
-                .await?;
-                output.agent_runner = Some(model_name.to_string());
-                return Ok(output);
-            }
-        }
+    if task.session == SessionMode::Reuse
+        && let Some(session_id) = reusable_session_id(state, model_name)
+        && !agent.config.resume_args.is_empty()
+    {
+        let mut output = run_agent_command(
+            &agent,
+            &agent.config.resume_args,
+            task,
+            prompt,
+            Some(session_id),
+        )
+        .await?;
+        output.agent_runner = Some(model_name.to_string());
+        return Ok(output);
     }
 
     let mut output = run_agent_command(&agent, &agent.config.new_args, task, prompt, None).await?;
@@ -370,10 +369,10 @@ async fn run_command(
     command.stderr(std::process::Stdio::piped());
 
     let mut child = command.spawn().context("failed to spawn process")?;
-    if let Some(text) = stdin_text {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(text.as_bytes()).await?;
-        }
+    if let Some(text) = stdin_text
+        && let Some(mut stdin) = child.stdin.take()
+    {
+        stdin.write_all(text.as_bytes()).await?;
     }
 
     let output = match tokio::time::timeout(
@@ -545,9 +544,11 @@ mod tests {
         assert_eq!(outcome.session_id.as_deref(), Some("session-ok"));
         assert_eq!(outcome.agent_runner.as_deref(), Some("success-agent"));
         assert!(outcome.stdout.contains("--- agent fail-agent stdout ---"));
-        assert!(outcome
-            .stdout
-            .contains("--- agent success-agent stdout ---"));
+        assert!(
+            outcome
+                .stdout
+                .contains("--- agent success-agent stdout ---")
+        );
         let log = fs::read_to_string(outcome.log_path)
             .await
             .expect("read log");

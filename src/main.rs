@@ -9,23 +9,22 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use crossterm::cursor;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{self, ClearType};
 use tokio::process::Command as SystemCommand;
-use tokio::time::{sleep, Instant};
+use tokio::time::{Instant, sleep};
 use tracing_subscriber::EnvFilter;
 
 use tinybutler::chat::{
-    chat_working_directory, codex_streaming_model_names, load_recovered_chat_state,
-    mark_turn_aborting, mark_turn_finished, mark_turn_started, ChatAgent, ChatEvent,
-    ChatInstructionContext, ChatLock, ChatRuntimeState, ChatSession, ChatStateValue,
-    CodexChatAgent,
+    ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatRuntimeState, ChatSession,
+    ChatStateValue, CodexChatAgent, chat_working_directory, codex_streaming_model_names,
+    load_recovered_chat_state, mark_turn_aborting, mark_turn_finished, mark_turn_started,
 };
-use tinybutler::config::{read_daemon_pid_record, Config, DaemonPidRecord};
+use tinybutler::config::{Config, DaemonPidRecord, read_daemon_pid_record};
 use tinybutler::scheduler::Scheduler;
 use tinybutler::telegram;
 

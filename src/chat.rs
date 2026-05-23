@@ -7,13 +7,12 @@
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Local};
 use codex_codes::{
-    protocol::methods, protocol_generated::types::ThreadResumeParams, AppServerBuilder,
-    AsyncClient, Notification, ServerMessage, ServerRequest, ThreadStartParams, TurnStartParams,
-    UserInput,
+    AppServerBuilder, AsyncClient, Notification, ServerMessage, ServerRequest, ThreadStartParams,
+    TurnStartParams, UserInput, protocol::methods, protocol_generated::types::ThreadResumeParams,
 };
 use serde::{Deserialize, Serialize};
 use tokio::fs as tokio_fs;

@@ -9,11 +9,11 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Datelike, Local, NaiveDateTime};
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use tar::{Archive, Builder};
 use tokio::fs;
 
@@ -49,10 +49,10 @@ pub(crate) async fn maintain_task_logs(logs_dir: &Path, now: DateTime<Local>) ->
             } else if month < current_month {
                 completed_logs_by_month.entry(month).or_default().push(path);
             }
-        } else if let Some(month) = archive_month_from_path(&path) {
-            if month < oldest_retained_month {
-                remove_file_if_present(&path).await?;
-            }
+        } else if let Some(month) = archive_month_from_path(&path)
+            && month < oldest_retained_month
+        {
+            remove_file_if_present(&path).await?;
         }
     }
 
@@ -317,9 +317,9 @@ mod tests {
     use std::path::Path;
 
     use chrono::{Local, TimeZone};
+    use flate2::Compression;
     use flate2::read::GzDecoder;
     use flate2::write::GzEncoder;
-    use flate2::Compression;
     use tar::{Archive, Builder, Header};
 
     use super::{maintain_task_logs, read_log_text};

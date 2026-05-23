@@ -9,14 +9,14 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Local, Utc};
 use tokio::fs;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-use crate::config::{prompt_mode_for_args, write_daemon_pid_record, Config};
+use crate::config::{Config, prompt_mode_for_args, write_daemon_pid_record};
 use crate::cron_expr::next_run_after as cron_next_run_after;
 pub use crate::cron_expr::{describe_schedule, format_schedule_for_display, normalize_cron};
 use crate::lock::TaskLock;
@@ -341,10 +341,10 @@ impl Scheduler {
             }
             let mut state = TaskState::load(&task.state_path()).await?;
             self.ensure_next_run(&task, &mut state).await?;
-            if self.is_due(&state) {
-                if let Err(err) = self.run_task(&task, false).await {
-                    error!("task {} failed: {err:#}", task.name);
-                }
+            if self.is_due(&state)
+                && let Err(err) = self.run_task(&task, false).await
+            {
+                error!("task {} failed: {err:#}", task.name);
             }
         }
         Ok(())
@@ -415,8 +415,8 @@ impl Scheduler {
         }
         state.save(&state_path).await?;
 
-        if self.should_notify(task, &outcome) {
-            if let Err(err) = telegram::notify_run(
+        if self.should_notify(task, &outcome)
+            && let Err(err) = telegram::notify_run(
                 &self.config,
                 &task.name,
                 &outcome.status,
@@ -426,12 +426,11 @@ impl Scheduler {
                 &outcome.summary,
             )
             .await
-            {
-                warn!(
-                    "failed to send Telegram notification for {}: {err:#}",
-                    task.name
-                );
-            }
+        {
+            warn!(
+                "failed to send Telegram notification for {}: {err:#}",
+                task.name
+            );
         }
         self.maintain_task_logs(task).await;
 

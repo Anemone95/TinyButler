@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
@@ -126,18 +126,18 @@ impl Config {
 
     /// Resolve a model name to its configured code-agent backend.
     pub fn code_agent_for_model(&self, model: &str) -> Option<ResolvedCodeAgent<'_>> {
-        if let Some((group, model_name)) = model.split_once('/') {
-            if let Some(config) = self.code_agents.get(group).filter(|config| {
+        if let Some((group, model_name)) = model.split_once('/')
+            && let Some(config) = self.code_agents.get(group).filter(|config| {
                 config
                     .models
                     .iter()
                     .any(|configured| configured == model_name)
-            }) {
-                return Some(ResolvedCodeAgent {
-                    model: model.to_string(),
-                    config,
-                });
-            }
+            })
+        {
+            return Some(ResolvedCodeAgent {
+                model: model.to_string(),
+                config,
+            });
         }
 
         for (group, config) in &self.code_agents {

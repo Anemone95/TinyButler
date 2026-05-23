@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use tinybutler::config::Config;
 use tinybutler::runner::RunOutcome;
 use tinybutler::scheduler::{
-    describe_schedule, format_schedule_for_display, normalize_cron, set_enabled_in_task_yaml,
-    Scheduler,
+    Scheduler, describe_schedule, format_schedule_for_display, normalize_cron,
+    set_enabled_in_task_yaml,
 };
 use tinybutler::task::{SessionMode, Task, TaskType};
 

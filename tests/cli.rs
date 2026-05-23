@@ -147,9 +147,10 @@ fn init_then_check_creates_valid_home() {
 
     assert!(home.join("tasks/smoke-task/task.yaml").exists());
     assert!(home.join("tasks/regular-check/run.sh").exists());
-    assert!(home
-        .join(".agents/skills/tinybutler-operations/SKILL.md")
-        .exists());
+    assert!(
+        home.join(".agents/skills/tinybutler-operations/SKILL.md")
+            .exists()
+    );
 
     let template_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     for relative_path in relative_files(&template_root) {
@@ -200,9 +201,11 @@ fn init_codex_group_reads_prompt_from_stdin_and_emit_json() {
     let config: serde_yaml::Value = serde_yaml::from_str(&config_text).expect("parse config");
     let codex = &config["code_agents"]["codex"];
     let models = codex["models"].as_sequence().expect("codex models");
-    assert!(models
-        .iter()
-        .any(|value| value.as_str() == Some("gpt-5.3-codex-spark")));
+    assert!(
+        models
+            .iter()
+            .any(|value| value.as_str() == Some("gpt-5.3-codex-spark"))
+    );
     assert!(models.iter().any(|value| value.as_str() == Some("gpt-5.5")));
 
     for field in ["new_args", "resume_args"] {

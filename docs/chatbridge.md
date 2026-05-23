@@ -32,7 +32,7 @@ Telegram command mapping, authorization, bot menu registration, and polling are 
 
 Selecting a model starts a fresh Telegram chat bridge session.
 
-`/session` should return an inline menu of previous chat sessions and resume the selected session as the active Telegram chat bridge session.
+`/session` should return previous chat sessions newest-first in pages of five. When more sessions remain, the menu includes `Show more` to display the next page; the button is omitted on the final page. Selecting a session resumes it as the active Telegram chat bridge session.
 
 After a session is active, non-command Telegram text in the authorized main chat is redirected to that session instead of being ignored.
 

@@ -1,8 +1,8 @@
 //! Telegram ingress command parsing tests.
 
 use tinybutler::telegram::{
-    code_block, escape_markdown_v2, parse_ingress_command, IngressCommand, TelegramPollState,
-    TELEGRAM_PARSE_MODE,
+    IngressCommand, TELEGRAM_PARSE_MODE, TelegramPollState, code_block, escape_markdown_v2,
+    parse_ingress_command,
 };
 
 #[test]
