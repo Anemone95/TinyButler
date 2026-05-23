@@ -60,7 +60,7 @@ timeout: 1800
 
 ## Agent Tasks
 
-Agent tasks use `type: agent`, read `agent.md` as the task-owned prompt, prepend TinyButler runtime context, and require an ordered `agents` list. Use a one-element list for a single code-agent runner.
+Agent tasks use `type: agent`, read `agent.md` as the task-owned prompt, prepend TinyButler runtime context, and require an ordered `agents` list. Use a one-element list for a single model.
 
 ```yaml
 name: smoke-task
@@ -75,7 +75,7 @@ timeout: 3600
 
 Agent task fields:
 
-- `agents`: a required ordered list of code-agent runner keys under `code_agents.<runner>` in `~/.tinybutler/config.yaml`. TinyButler tries them in order and records task failure only after the final agent fails.
+- `agents`: a required ordered list of model names listed under `code_agents.<group>.models` in `~/.tinybutler/config.yaml`. TinyButler resolves each model to its configured backend group, tries them in order, and records task failure only after the final agent fails.
 - `session`: `independent` starts a fresh session; `reuse` resumes the previous successful session when the runner supports it.
 
 Agent runner configuration, session placeholders, and sandbox/model flags are owned by [configuration.md](configuration.md).

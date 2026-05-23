@@ -3,11 +3,13 @@ telegram:
   chat_id: null
 
 code_agents:
-  gemini-3.1-flash-lite:
+  gemini:
     command: /usr/bin/gemini
-    args:
-      - "--model"
+    models:
       - gemini-3.1-flash-lite
+    new_args:
+      - "--model"
+      - "{model}"
       - "--skip-trust"
       - "--approval-mode"
       - yolo
@@ -17,7 +19,7 @@ code_agents:
       - "{prompt}"
     resume_args:
       - "--model"
-      - gemini-3.1-flash-lite
+      - "{model}"
       - "--skip-trust"
       - "--approval-mode"
       - yolo
@@ -29,16 +31,19 @@ code_agents:
       - "{prompt}"
     stream_args:
       - "--model"
-      - gemini-3.1-flash-lite
+      - "{model}"
       - "--skip-trust"
       - "--approval-mode"
       - yolo
       - "--output-format"
       - stream-json
 
-  gpt-5.3-codex-spark:
+  codex:
     command: /usr/bin/codex
-    args:
+    models:
+      - gpt-5.3-codex-spark
+      - gpt-5.5
+    new_args:
       - exec
       - "--json"
       - "--color"
@@ -46,11 +51,12 @@ code_agents:
       - "--sandbox"
       - danger-full-access
       - "-m"
-      - gpt-5.3-codex-spark
+      - "{model}"
       - "-c"
       - service_tier="fast"
       - "--skip-git-repo-check"
       - "-"
+      - stdio
     resume_args:
       - exec
       - resume
@@ -59,51 +65,16 @@ code_agents:
       - "-c"
       - sandbox_mode="danger-full-access"
       - "-m"
-      - gpt-5.3-codex-spark
+      - "{model}"
       - "-c"
       - service_tier="fast"
       - "--skip-git-repo-check"
       - "-"
+      - stdio
     stream_args:
       - app-server
       - "-c"
-      - model="gpt-5.3-codex-spark"
-      - "-c"
-      - sandbox_mode="danger-full-access"
-      - "--listen"
-      - "stdio://"
-  gpt-5.5:
-    command: /usr/bin/codex
-    args:
-      - exec
-      - "--json"
-      - "--color"
-      - never
-      - "--sandbox"
-      - danger-full-access
-      - "-m"
-      - gpt-5.5
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-    resume_args:
-      - exec
-      - resume
-      - "--json"
-      - "{sessionId}"
-      - "-c"
-      - sandbox_mode="danger-full-access"
-      - "-m"
-      - gpt-5.5
-      - "-c"
-      - service_tier="fast"
-      - "--skip-git-repo-check"
-      - "-"
-    stream_args:
-      - app-server
-      - "-c"
-      - model="gpt-5.5"
+      - model="{model}"
       - "-c"
       - sandbox_mode="danger-full-access"
       - "--listen"

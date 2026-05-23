@@ -762,9 +762,8 @@ async fn handle_callback(config: &Config, callback: &TelegramCallbackQuery) -> R
 
 async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Result<()> {
     let agent_config = config
-        .code_agents
-        .get(runner)
-        .with_context(|| format!("missing code_agents.{runner}"))?;
+        .code_agent_for_model(runner)
+        .with_context(|| format!("missing code_agents model {runner}"))?;
     if !codex_streaming_runner_keys(config).contains(&runner.to_string()) {
         return send_markdown_text_to_chat(config, chat_id, "Runner no longer supports chat").await;
     }
@@ -820,9 +819,8 @@ async fn handle_session_callback(config: &Config, chat_id: &str, session_id: &st
         .cloned()
         .with_context(|| format!("unknown chat session {session_id}"))?;
     let agent_config = config
-        .code_agents
-        .get(&session.runner)
-        .with_context(|| format!("missing code_agents.{}", session.runner))?;
+        .code_agent_for_model(&session.runner)
+        .with_context(|| format!("missing code_agents model {}", session.runner))?;
     if !claim_telegram_selection(
         config,
         ChatStateValue::SelectingSession,
@@ -872,9 +870,8 @@ async fn run_telegram_chat_turn(
     mut abort_receiver: oneshot::Receiver<()>,
 ) -> Result<()> {
     let agent_config = config
-        .code_agents
-        .get(&runner)
-        .with_context(|| format!("missing code_agents.{runner}"))?;
+        .code_agent_for_model(&runner)
+        .with_context(|| format!("missing code_agents model {runner}"))?;
     let working_directory = chat_working_directory(&config);
     let mut agent = CodexChatAgent::connect_with_context(
         runner.clone(),

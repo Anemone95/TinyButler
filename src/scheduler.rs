@@ -98,8 +98,13 @@ impl Scheduler {
     /// Validate local config and every task definition under `tasks/`.
     pub async fn check(&self) -> Result<()> {
         let mut failures = Vec::new();
-        if let Err(err) = Config::load(Some(self.config.home.clone())) {
-            failures.push(format!("config.yaml: {err:#}"));
+        match Config::load(Some(self.config.home.clone())) {
+            Ok(config) => {
+                if let Err(err) = config.validate_code_agents() {
+                    failures.push(format!("config.yaml: {err:#}"));
+                }
+            }
+            Err(err) => failures.push(format!("config.yaml: {err:#}")),
         }
 
         let tasks_dir = self.config.tasks_dir();
@@ -154,9 +159,9 @@ impl Scheduler {
                     bail!("agent task {} requires {}", task.name, prompt.display());
                 }
                 for runner in task.agent_runner_keys() {
-                    if !self.config.code_agents.contains_key(runner) {
+                    if self.config.code_agent_for_model(runner).is_none() {
                         bail!(
-                            "agent task {} references missing code_agents.{} in config.yaml",
+                            "agent task {} references missing code_agents model {} in config.yaml",
                             task.name,
                             runner
                         );

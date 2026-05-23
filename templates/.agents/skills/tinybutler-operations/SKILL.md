@@ -222,13 +222,17 @@ telegram:
   chat_id: "123456789"
 ```
 
-Code-agent runners are configured under `code_agents.<runner>`:
+Code-agent backends are configured under `code_agents.<group>`, where the group
+is a backend label such as `codex` or `gemini`:
 
 ```yaml
 code_agents:
-  gpt-5.3-codex-spark:
+  codex:
     command: /usr/bin/codex
-    args:
+    models:
+      - gpt-5.3-codex-spark
+      - gpt-5.5
+    new_args:
       - exec
       - "--json"
       - "--color"
@@ -236,24 +240,33 @@ code_agents:
       - "--sandbox"
       - danger-full-access
       - "-m"
-      - gpt-5.3-codex-spark
+      - "{model}"
       - "--skip-git-repo-check"
       - "-"
+      - stdio
     resume_args:
       - exec
       - resume
       - "--json"
       - "{sessionId}"
       - "-m"
-      - gpt-5.3-codex-spark
+      - "{model}"
       - "--skip-git-repo-check"
       - "-"
+      - stdio
 ```
 
-Place runner model, sandbox, and safety flags only in `code_agents` command
-args. Do not put runner-specific flags in `task.yaml`.
+Place backend model, sandbox, and safety flags only in `code_agents` command
+argument templates. Do not put runner-specific flags in `task.yaml`.
 
-Common template runner keys:
+Task `agents` entries name models from `code_agents.<group>.models`; TinyButler
+resolves each model to its configured backend group. In `new_args` and
+`resume_args`, use `{prompt}` where the prompt should be inserted as an
+argument, or end the list with the literal `stdio` placeholder to send the
+prompt through standard input. TinyButler removes the `stdio` placeholder before
+spawning the command.
+
+Common template model names:
 
 - `gemini-3.1-flash-lite`
 - `gpt-5.3-codex-spark`
@@ -359,10 +372,11 @@ Use `tinybutler telegram "..."` only when the result is useful to send.
 
 Agent task fields:
 
-- `agents`: required ordered list of code-agent runner keys under
-  `code_agents.<runner>` in `~/.tinybutler/config.yaml`. Use a one-element list
-  for a single code-agent runner. TinyButler tries each runner in order and
-  reports task failure only after the final agent fails.
+- `agents`: required ordered list of model names listed under
+  `code_agents.<group>.models` in `~/.tinybutler/config.yaml`. Use a
+  one-element list for a single model. TinyButler resolves each model to its
+  backend group, tries each model in order, and reports task failure only after
+  the final agent fails.
 - `session`: `independent` starts a new agent session every run. `reuse`
   resumes the previous successful session when the runner supports resume.
 

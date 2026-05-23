@@ -42,37 +42,39 @@ Telegram ingress behavior, webhook caveats, and `telegram_state.json` are owned 
 
 ## Code Agent Config
 
-Code-agent runners are configured under `code_agents.<runner>` in local `~/.tinybutler/config.yaml`.
+Code-agent CLI backends are configured under `code_agents.<group>` in local `~/.tinybutler/config.yaml`. Group names are backend labels such as `codex` or `gemini`.
 
 `templates/config.yaml` is the source for example runner entries.
 
-Each runner entry may define `command`, `args`, `resume_args`, and `stream_args`.
+Each group entry may define `command`, `new_args`, `resume_args`, `stream_args`, and `models`.
 
-Template runner keys are `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`.
+`models` lists the model names that tasks and chat selection can use. The default template groups `gemini-3.1-flash-lite` under `gemini`, and `gpt-5.3-codex-spark` plus `gpt-5.5` under `codex`.
 
 ## Scheduled Agent Arguments
 
-Scheduled agent tasks use `args` for a fresh run.
+Scheduled agent tasks use `new_args` for a fresh run.
 
 When `session: reuse` has a previous successful session id, scheduled agent tasks use `resume_args`.
 
-`{prompt}` is replaced with the task prompt plus TinyButler runtime context when a runner needs prompt-in-args.
+`{model}` is replaced with the selected model name.
+
+`{prompt}` is replaced with the task prompt plus TinyButler runtime context when a runner needs prompt-in-args. Otherwise, `new_args` or `resume_args` must end with the literal `stdio` placeholder, which TinyButler removes before spawning the command and uses to send the prompt through standard input.
 
 `{sessionId}` is replaced with the previous successful session id for `session: reuse`.
 
-If no previous session id exists, the first `session: reuse` run starts a new session with `args`.
+If no previous session id exists, the first `session: reuse` run starts a new session with `new_args`.
 
 ## Streaming Agent Arguments
 
 `stream_args` is used by interactive chat bridge runners.
 
-`stream_args` should be complete for that runner, including model, sandbox or approval policy, and streaming output mode when the CLI requires them; it must not inherit those settings from `args`.
+`stream_args` should be complete for that runner, including model, sandbox or approval policy, and streaming output mode when the CLI requires them; it must not inherit those settings from `new_args`.
 
 A runner supports interactive streaming when it has `stream_args` or a dedicated Rust stream adapter.
 
 ## Runner Flag Boundary
 
-TinyButler does not manage Codex, Gemini, Claude, model, sandbox, or safety flags in `task.yaml`.
+TinyButler does not manage Codex, Gemini, Claude, sandbox, or safety flags in `task.yaml`.
 
 Users own runner flags through local `code_agents` config.
 
@@ -80,7 +82,7 @@ The default templates use Codex `danger-full-access` and Gemini `--approval-mode
 
 ## Session State
 
-For agent task runners, `session: reuse` stores the latest successful session id and the runner key that produced it in the task `state.json`. Reuse only applies when the stored session belongs to the runner currently being attempted.
+For agent task runners, `session: reuse` stores the latest successful session id and the model name that produced it in the task `state.json`. Reuse only applies when the stored session belongs to the model currently being attempted.
 
 Interactive chat sessions store their runtime metadata in chat bridge state, not in task `state.json`.
 

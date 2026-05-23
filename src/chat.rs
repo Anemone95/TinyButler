@@ -18,12 +18,12 @@ use codex_codes::{
 use serde::{Deserialize, Serialize};
 use tokio::fs as tokio_fs;
 
-use crate::config::{CodeAgentConfig, Config};
+use crate::config::{CodeAgentConfig, Config, ResolvedCodeAgent};
 
 /// A resumable interactive code-agent session known to TinyButler.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatSession {
-    /// Configured runner key under `code_agents`.
+    /// Configured model name selected from `code_agents.<group>.models`.
     pub runner: String,
     /// Stable session/thread id returned by the adapter.
     pub session_id: String,
@@ -171,23 +171,21 @@ impl Drop for ChatLock {
     }
 }
 
-/// Return configured runner keys that can start interactive streaming sessions.
+/// Return configured model names that can start interactive streaming sessions.
 pub fn streaming_runner_keys(config: &Config) -> Vec<String> {
-    config
-        .code_agents
-        .iter()
-        .filter(|(_, agent)| !agent.stream_args.is_empty())
-        .map(|(key, _)| key.clone())
-        .collect()
+    config.streaming_model_names()
 }
 
-/// Return runner keys supported by the current Codex chat adapter.
+/// Return model names supported by the current Codex chat adapter.
 pub fn codex_streaming_runner_keys(config: &Config) -> Vec<String> {
     config
-        .code_agents
-        .iter()
-        .filter(|(_, agent)| codex_chat_supported(agent))
-        .map(|(key, _)| key.clone())
+        .streaming_model_names()
+        .into_iter()
+        .filter(|model| {
+            config
+                .code_agent_for_model(model)
+                .is_some_and(|agent| codex_chat_supported(agent.config))
+        })
         .collect()
 }
 
@@ -388,7 +386,7 @@ impl CodexChatAgent {
     /// Start a Codex app-server from local runner config.
     pub async fn connect(
         runner: impl Into<String>,
-        agent: &CodeAgentConfig,
+        agent: ResolvedCodeAgent<'_>,
         working_directory: Option<PathBuf>,
     ) -> Result<Self> {
         Self::connect_with_context(
@@ -403,7 +401,7 @@ impl CodexChatAgent {
     /// Start a Codex app-server with explicit user-facing transport context.
     pub async fn connect_with_context(
         runner: impl Into<String>,
-        agent: &CodeAgentConfig,
+        agent: ResolvedCodeAgent<'_>,
         working_directory: Option<PathBuf>,
         instruction_context: ChatInstructionContext,
     ) -> Result<Self> {
@@ -691,20 +689,26 @@ fn chat_bridge_instructions(context: ChatInstructionContext) -> String {
 
 /// Build a Codex app-server builder from a TinyButler `stream_args` runner entry.
 pub fn codex_builder_from_config(
-    agent: &CodeAgentConfig,
+    agent: ResolvedCodeAgent<'_>,
     working_directory: Option<PathBuf>,
 ) -> Result<AppServerBuilder> {
-    if agent.stream_args.is_empty() {
+    if agent.config.stream_args.is_empty() {
         bail!("Codex chat runner is missing stream_args");
     }
 
-    let mut builder = AppServerBuilder::new().command(&agent.command);
+    let mut builder = AppServerBuilder::new().command(&agent.config.command);
     if let Some(directory) = working_directory {
         builder = builder.working_directory(directory);
     }
 
     let mut extra_args = Vec::new();
-    let mut iter = agent.stream_args.iter().peekable();
+    let expanded_args = agent
+        .config
+        .stream_args
+        .iter()
+        .map(|arg| arg.replace("{model}", &agent.model))
+        .collect::<Vec<_>>();
+    let mut iter = expanded_args.iter().peekable();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "app-server" => {}
@@ -785,7 +789,16 @@ mod tests {
         CodeAgentConfig {
             command: "/usr/bin/codex".to_string(),
             stream_args: stream_args.iter().map(|arg| arg.to_string()).collect(),
+            models: vec!["gpt-test".to_string()],
             ..CodeAgentConfig::default()
+        }
+    }
+
+    fn resolved_codex_config(config: &CodeAgentConfig) -> ResolvedCodeAgent<'_> {
+        ResolvedCodeAgent {
+            group: "codex",
+            model: "gpt-test".to_string(),
+            config,
         }
     }
 
@@ -799,12 +812,21 @@ mod tests {
         config
             .code_agents
             .insert("codex".to_string(), codex_config(&["app-server"]));
-        config
-            .code_agents
-            .insert("gemini".to_string(), codex_config(&["--output-format"]));
+        config.code_agents.insert(
+            "gemini".to_string(),
+            CodeAgentConfig {
+                command: "/usr/bin/gemini".to_string(),
+                stream_args: vec!["--output-format".to_string()],
+                models: vec!["gemini-test".to_string()],
+                ..CodeAgentConfig::default()
+            },
+        );
 
-        assert_eq!(codex_streaming_runner_keys(&config), vec!["codex"]);
-        assert_eq!(streaming_runner_keys(&config), vec!["codex", "gemini"]);
+        assert_eq!(codex_streaming_runner_keys(&config), vec!["gpt-test"]);
+        assert_eq!(
+            streaming_runner_keys(&config),
+            vec!["gpt-test", "gemini-test"]
+        );
     }
 
     #[test]
@@ -1072,7 +1094,8 @@ mod tests {
 
     #[test]
     fn rejects_missing_codex_stream_args() {
-        let err = codex_builder_from_config(&codex_config(&[]), None).unwrap_err();
+        let config = codex_config(&[]);
+        let err = codex_builder_from_config(resolved_codex_config(&config), None).unwrap_err();
         assert!(err.to_string().contains("missing stream_args"));
     }
 
@@ -1081,19 +1104,20 @@ mod tests {
         let config = codex_config(&[
             "app-server",
             "-c",
-            "model=\"gpt-5.5\"",
+            "model=\"{model}\"",
             "-c",
             "sandbox_mode=\"danger-full-access\"",
             "--listen",
             "stdio://",
         ]);
-        codex_builder_from_config(&config, Some(PathBuf::from("/tmp"))).expect("builder");
+        codex_builder_from_config(resolved_codex_config(&config), Some(PathBuf::from("/tmp")))
+            .expect("builder");
     }
 
     #[test]
     fn rejects_non_stdio_codex_stream_args() {
         let config = codex_config(&["app-server", "--listen", "ws://127.0.0.1:9999"]);
-        let err = codex_builder_from_config(&config, None).unwrap_err();
+        let err = codex_builder_from_config(resolved_codex_config(&config), None).unwrap_err();
         assert!(err.to_string().contains("stdio://"));
     }
 

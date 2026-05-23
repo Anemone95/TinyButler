@@ -141,9 +141,9 @@ rm -rf "$HOME_DIR"
 
 ## Agent Runner Paths
 
-At minimum, cover scheduled agent `args` and `resume_args` with a fake local runner so the test is deterministic:
+At minimum, cover scheduled agent `new_args` and `resume_args` with a fake local runner so the test is deterministic:
 
-- Add a `fake-agent` runner under temporary `config.yaml`.
+- Add a fake backend group and `fake-agent` model under temporary `config.yaml`.
 - Create an agent task with `session: reuse`.
 - Run it once through `tinybutler tasks`; confirm `state.json` stores `session-fresh`.
 - Inspect it with `tinybutler task status <task>`; confirm the output shows formatted runtime state and latest-log preview.
@@ -151,7 +151,7 @@ At minimum, cover scheduled agent `args` and `resume_args` with a fake local run
 
 When real credentials and time allow, test each configured real runner:
 
-- Plain scheduled mode: `args`.
+- Plain scheduled mode: `new_args`.
 - Resume scheduled mode: `resume_args` with `session: reuse`.
 - Interactive stream mode: `tinybutler chat new` for runners supported by the current Rust adapter.
 
@@ -164,7 +164,7 @@ Break a temporary config or task file and confirm `tinybutler check` fails with 
 - Remove a required runner `command`.
 - Add obsolete fields such as `workspace`, `notify`, or `concurrency` to `task.yaml`.
 - Remove `run.sh` from a command task.
-- Point an agent task at a missing `code_agents.<runner>` key.
+- Point an agent task at a model name not listed under any `code_agents.<group>.models`.
 
 Restore or delete the temporary home after the failure check.
 

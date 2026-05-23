@@ -128,7 +128,7 @@ impl Task {
         }
     }
 
-    /// Return the ordered code-agent runner keys for an agent task.
+    /// Return the ordered code-agent model names for an agent task.
     pub fn agent_runner_keys(&self) -> Vec<&str> {
         self.agents.iter().map(String::as_str).collect()
     }

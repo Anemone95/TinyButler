@@ -14,7 +14,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use crate::config::{CodeAgentConfig, Config};
+use crate::config::{Config, ResolvedCodeAgent};
 use crate::state::TaskState;
 use crate::task::{SessionMode, Task, TaskType};
 
@@ -38,7 +38,7 @@ pub struct RunOutcome {
     pub summary: String,
     /// Agent session id extracted from structured runner output, when present.
     pub session_id: Option<String>,
-    /// Code-agent runner key that produced this output.
+    /// Code-agent model name that produced this output.
     pub agent_runner: Option<String>,
     /// Captured stdout from the runner process.
     pub stdout: String,
@@ -227,22 +227,26 @@ async fn run_code_agent(
     prompt: &str,
 ) -> Result<ProcessOutput> {
     let agent = config
-        .code_agents
-        .get(runner_key)
-        .with_context(|| format!("missing code_agents.{runner_key} in config.yaml"))?;
+        .code_agent_for_model(runner_key)
+        .with_context(|| format!("missing code_agents model {runner_key} in config.yaml"))?;
     if task.session == SessionMode::Reuse {
         if let Some(session_id) = reusable_session_id(state, runner_key) {
-            if !agent.resume_args.is_empty() {
-                let mut output =
-                    run_agent_command(agent, &agent.resume_args, task, prompt, Some(session_id))
-                        .await?;
+            if !agent.config.resume_args.is_empty() {
+                let mut output = run_agent_command(
+                    &agent,
+                    &agent.config.resume_args,
+                    task,
+                    prompt,
+                    Some(session_id),
+                )
+                .await?;
                 output.agent_runner = Some(runner_key.to_string());
                 return Ok(output);
             }
         }
     }
 
-    let mut output = run_agent_command(agent, &agent.args, task, prompt, None).await?;
+    let mut output = run_agent_command(&agent, &agent.config.new_args, task, prompt, None).await?;
     output.agent_runner = Some(runner_key.to_string());
     Ok(output)
 }
@@ -250,30 +254,34 @@ async fn run_code_agent(
 /// Build a user-configured agent command and feed the prompt on stdin unless
 /// the argument template explicitly embeds `{prompt}`.
 async fn run_agent_command(
-    agent: &CodeAgentConfig,
+    agent: &ResolvedCodeAgent<'_>,
     args: &[String],
     task: &Task,
     prompt: &str,
     session_id: Option<&str>,
 ) -> Result<ProcessOutput> {
-    let mut command = Command::new(&agent.command);
+    let mut command = Command::new(&agent.config.command);
     command.current_dir(&task.dir);
     apply_task_environment(&mut command, task);
     command.kill_on_drop(true);
 
-    let mut prompt_in_args = false;
-    for arg in args {
-        if arg.contains("{prompt}") {
-            prompt_in_args = true;
-        }
-        command.arg(expand_agent_arg(arg, task, prompt, session_id));
+    let prompt_mode = prompt_mode_for_args(args)?;
+    let command_args = if prompt_mode == PromptMode::Stdio {
+        &args[..args.len() - 1]
+    } else {
+        args
+    };
+    for arg in command_args {
+        command.arg(expand_agent_arg(
+            arg,
+            &agent.model,
+            task,
+            prompt,
+            session_id,
+        ));
     }
 
-    let stdin_text = if prompt_in_args {
-        None
-    } else {
-        Some(prompt.to_string())
-    };
+    let stdin_text = (prompt_mode == PromptMode::Stdio).then(|| prompt.to_string());
     run_command(command, stdin_text, task.timeout).await
 }
 
@@ -332,10 +340,34 @@ fn apply_task_environment(command: &mut Command, task: &Task) {
 }
 
 /// Expand placeholders supported by local code-agent command templates.
-fn expand_agent_arg(arg: &str, task: &Task, prompt: &str, session_id: Option<&str>) -> String {
+fn expand_agent_arg(
+    arg: &str,
+    model: &str,
+    task: &Task,
+    prompt: &str,
+    session_id: Option<&str>,
+) -> String {
     arg.replace("{prompt}", prompt)
+        .replace("{model}", model)
         .replace("{sessionId}", session_id.unwrap_or(""))
         .replace("{taskDir}", &task.dir.display().to_string())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptMode {
+    Argument,
+    Stdio,
+}
+
+fn prompt_mode_for_args(args: &[String]) -> Result<PromptMode> {
+    let has_prompt_arg = args.iter().any(|arg| arg.contains("{prompt}"));
+    let has_stdio = args.last().is_some_and(|arg| arg == "stdio");
+    match (has_prompt_arg, has_stdio) {
+        (true, false) => Ok(PromptMode::Argument),
+        (false, true) => Ok(PromptMode::Stdio),
+        (true, true) => bail!("agent args must use either {{prompt}} or trailing stdio, not both"),
+        (false, false) => bail!("agent args must contain {{prompt}} or end with stdio"),
+    }
 }
 
 fn agent_task_prompt(prompt: &str) -> String {
@@ -433,6 +465,8 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    use crate::config::CodeAgentConfig;
+
     #[test]
     fn agent_task_prompt_includes_tinybutler_context() {
         let prompt = agent_task_prompt("Inspect task state.");
@@ -488,10 +522,12 @@ mod tests {
             "fail-agent".to_string(),
             CodeAgentConfig {
                 command: "/bin/sh".to_string(),
-                args: vec![
+                new_args: vec![
                     "-c".to_string(),
                     "printf 'first failed\\n'; printf 'bad agent\\n' >&2; exit 7".to_string(),
+                    "stdio".to_string(),
                 ],
+                models: vec!["fail-agent".to_string()],
                 ..Default::default()
             },
         );
@@ -499,10 +535,12 @@ mod tests {
             "success-agent".to_string(),
             CodeAgentConfig {
                 command: "/bin/sh".to_string(),
-                args: vec![
+                new_args: vec![
                     "-c".to_string(),
                     "cat >/dev/null; printf '{\"session_id\":\"session-ok\"}\\n'".to_string(),
+                    "stdio".to_string(),
                 ],
+                models: vec!["success-agent".to_string()],
                 ..Default::default()
             },
         );

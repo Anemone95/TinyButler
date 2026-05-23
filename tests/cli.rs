@@ -189,7 +189,7 @@ fn init_refreshes_repo_scoped_operation_skill() {
 }
 
 #[test]
-fn init_codex_runners_read_prompt_from_stdin_and_emit_json() {
+fn init_codex_group_reads_prompt_from_stdio_and_emit_json() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
@@ -198,33 +198,28 @@ fn init_codex_runners_read_prompt_from_stdin_and_emit_json() {
 
     let config_text = std::fs::read_to_string(home.join("config.yaml")).expect("config");
     let config: serde_yaml::Value = serde_yaml::from_str(&config_text).expect("parse config");
-    for runner in ["gpt-5.3-codex-spark", "gpt-5.5"] {
-        let args = config["code_agents"][runner]["args"]
-            .as_sequence()
-            .expect("args");
-        let resume_args = config["code_agents"][runner]["resume_args"]
-            .as_sequence()
-            .expect("resume args");
+    let codex = &config["code_agents"]["codex"];
+    let models = codex["models"].as_sequence().expect("codex models");
+    assert!(models
+        .iter()
+        .any(|value| value.as_str() == Some("gpt-5.3-codex-spark")));
+    assert!(models.iter().any(|value| value.as_str() == Some("gpt-5.5")));
+
+    for field in ["new_args", "resume_args"] {
+        let args = codex[field].as_sequence().expect(field);
 
         assert!(
             args.iter().any(|value| value.as_str() == Some("--json")),
-            "{runner} fresh args should emit JSONL"
+            "codex {field} should emit JSONL"
+        );
+        assert!(
+            args.iter().any(|value| value.as_str() == Some("{model}")),
+            "codex {field} should use the selected model placeholder"
         );
         assert_eq!(
             args.last().and_then(|value| value.as_str()),
-            Some("-"),
-            "{runner} fresh args should read prompt from stdin"
-        );
-        assert!(
-            resume_args
-                .iter()
-                .any(|value| value.as_str() == Some("--json")),
-            "{runner} resume args should emit JSONL"
-        );
-        assert_eq!(
-            resume_args.last().and_then(|value| value.as_str()),
-            Some("-"),
-            "{runner} resume args should read prompt from stdin"
+            Some("stdio"),
+            "codex {field} should mark prompt delivery through stdin"
         );
     }
 }
@@ -240,7 +235,7 @@ fn init_stream_runners_include_complete_streaming_flags() {
     let config_text = std::fs::read_to_string(home.join("config.yaml")).expect("config");
     let config: serde_yaml::Value = serde_yaml::from_str(&config_text).expect("parse config");
 
-    let gemini_stream_args = config["code_agents"]["gemini-3.1-flash-lite"]["stream_args"]
+    let gemini_stream_args = config["code_agents"]["gemini"]["stream_args"]
         .as_sequence()
         .expect("gemini stream args");
     assert!(
@@ -258,27 +253,25 @@ fn init_stream_runners_include_complete_streaming_flags() {
         "gemini streaming should include approval mode"
     );
 
-    for runner in ["gpt-5.3-codex-spark", "gpt-5.5"] {
-        let codex_stream_args = config["code_agents"][runner]["stream_args"]
-            .as_sequence()
-            .expect("codex stream args");
-        let codex_stream_arg_text = codex_stream_args
-            .iter()
-            .filter_map(|value| value.as_str())
-            .collect::<Vec<_>>();
-        assert!(
-            codex_stream_arg_text.contains(&"app-server"),
-            "{runner} streaming should use app-server"
-        );
-        assert!(
-            codex_stream_arg_text.contains(&format!("model=\"{runner}\"").as_str()),
-            "{runner} streaming should set model"
-        );
-        assert!(
-            codex_stream_arg_text.contains(&"sandbox_mode=\"danger-full-access\""),
-            "{runner} streaming should set sandbox mode"
-        );
-    }
+    let codex_stream_args = config["code_agents"]["codex"]["stream_args"]
+        .as_sequence()
+        .expect("codex stream args");
+    let codex_stream_arg_text = codex_stream_args
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        codex_stream_arg_text.contains(&"app-server"),
+        "codex streaming should use app-server"
+    );
+    assert!(
+        codex_stream_arg_text.contains(&"model=\"{model}\""),
+        "codex streaming should set model through the selected model placeholder"
+    );
+    assert!(
+        codex_stream_arg_text.contains(&"sandbox_mode=\"danger-full-access\""),
+        "codex streaming should set sandbox mode"
+    );
 }
 
 #[test]
@@ -340,7 +333,7 @@ fn check_rejects_missing_task_execution_files_and_runners() {
         "check should reject agent tasks with unknown runners"
     );
     assert!(
-        stderr(&missing_runner).contains("code_agents.missing-runner"),
+        stderr(&missing_runner).contains("code_agents model missing-runner"),
         "stderr should mention missing runner: {}",
         stderr(&missing_runner)
     );
@@ -445,19 +438,24 @@ fn agent_task_tries_agents_in_order_until_one_succeeds() {
 code_agents:
   fail-agent:
     command: /bin/sh
-    args:
+    models:
+      - fail-agent
+    new_args:
       - "-c"
       - |
         printf 'first stdout\n'
         printf 'first stderr\n' >&2
         exit 7
+      - "{prompt}"
   success-agent:
     command: /bin/sh
-    args:
+    models:
+      - success-agent
+    new_args:
       - "-c"
       - |
-        cat >/dev/null
         printf '{"session_id":"session-ok"}\n'
+      - "{prompt}"
 "#,
     )
     .expect("write config");

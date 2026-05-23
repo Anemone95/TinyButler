@@ -40,21 +40,35 @@ pub struct TelegramConfig {
     pub chat_id: Option<String>,
 }
 
-/// Configurable command template for future agent runner backends.
+/// Configurable command templates for one code-agent CLI backend.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodeAgentConfig {
     /// Absolute or PATH-resolved executable name.
     pub command: String,
-    /// Arguments used for a fresh agent session.
-    #[serde(default)]
-    pub args: Vec<String>,
+    /// Arguments used for a fresh scheduled agent session.
+    #[serde(default, alias = "args")]
+    pub new_args: Vec<String>,
     /// Arguments used when `session: reuse` has a stored session id.
     #[serde(default)]
     pub resume_args: Vec<String>,
     /// Arguments used for long-lived interactive chat bridge sessions.
     #[serde(default)]
     pub stream_args: Vec<String>,
+    /// Model names supported by this backend configuration.
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
+/// Resolved code-agent backend for a requested model name.
+#[derive(Debug, Clone)]
+pub struct ResolvedCodeAgent<'a> {
+    /// Group key under `code_agents`, such as `codex` or `gemini`.
+    pub group: &'a str,
+    /// Requested model name from a task or chat selection.
+    pub model: String,
+    /// Backend command template that supports `model`.
+    pub config: &'a CodeAgentConfig,
 }
 
 impl Config {
@@ -112,12 +126,83 @@ impl Config {
         self.home.join("chat.lock")
     }
 
+    /// Resolve a model name to its configured code-agent backend.
+    pub fn code_agent_for_model(&self, model: &str) -> Option<ResolvedCodeAgent<'_>> {
+        for (group, config) in &self.code_agents {
+            if config.models.iter().any(|configured| configured == model) {
+                return Some(ResolvedCodeAgent {
+                    group,
+                    model: model.to_string(),
+                    config,
+                });
+            }
+        }
+
+        self.code_agents
+            .get_key_value(model)
+            .filter(|(_, config)| config.models.is_empty())
+            .map(|(group, config)| ResolvedCodeAgent {
+                group,
+                model: model.to_string(),
+                config,
+            })
+    }
+
+    /// Return all configured model names that have interactive stream args.
+    pub fn streaming_model_names(&self) -> Vec<String> {
+        let mut models = Vec::new();
+        for (group, config) in &self.code_agents {
+            if config.stream_args.is_empty() {
+                continue;
+            }
+            if config.models.is_empty() {
+                models.push(group.clone());
+            } else {
+                models.extend(config.models.iter().cloned());
+            }
+        }
+        models
+    }
+
+    /// Validate local code-agent command templates.
+    pub fn validate_code_agents(&self) -> Result<()> {
+        for (group, config) in &self.code_agents {
+            config.validate_templates(group)?;
+        }
+        Ok(())
+    }
+
     /// Create a safe initial TinyButler home without overwriting existing files.
     pub async fn init_home(&self) -> Result<()> {
         copy_templates_into_home(&self.home).await?;
 
         println!("Initialized TinyButler home at {}", self.home.display());
         Ok(())
+    }
+}
+
+impl CodeAgentConfig {
+    /// Validate argument templates that run scheduled prompts.
+    pub fn validate_templates(&self, group: &str) -> Result<()> {
+        validate_prompt_args(group, "new_args", &self.new_args)?;
+        validate_prompt_args(group, "resume_args", &self.resume_args)
+    }
+}
+
+fn validate_prompt_args(group: &str, field: &str, args: &[String]) -> Result<()> {
+    if args.is_empty() {
+        return Ok(());
+    }
+    let has_prompt_arg = args.iter().any(|arg| arg.contains("{prompt}"));
+    let has_stdio = args.last().is_some_and(|arg| arg == "stdio");
+    match (has_prompt_arg, has_stdio) {
+        (true, false) | (false, true) => Ok(()),
+        (true, true) => bail!(
+            "code_agents.{group}.{field} must use either {{prompt}} or trailing stdio, not both"
+        ),
+        (false, false) => {
+            bail!("code_agents.{group}.{field} must contain {{prompt}} or end with stdio")
+        }
     }
 }
 
@@ -319,4 +404,55 @@ async fn copy_template_file_if_missing(source: &Path, target: &Path) -> Result<(
         .await
         .with_context(|| format!("failed to set permissions on {}", target.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with_agent(group: &str, models: &[&str]) -> Config {
+        let mut code_agents = BTreeMap::new();
+        code_agents.insert(
+            group.to_string(),
+            CodeAgentConfig {
+                command: "/bin/true".to_string(),
+                models: models.iter().map(|model| model.to_string()).collect(),
+                ..CodeAgentConfig::default()
+            },
+        );
+        Config {
+            home: PathBuf::from("/tmp/tinybutler-config-test"),
+            telegram: TelegramConfig::default(),
+            code_agents,
+        }
+    }
+
+    #[test]
+    fn resolves_models_through_configured_agent_groups() {
+        let config = config_with_agent("codex", &["gpt-5.5"]);
+        let agent = config
+            .code_agent_for_model("gpt-5.5")
+            .expect("model should resolve");
+
+        assert_eq!(agent.group, "codex");
+        assert_eq!(agent.model, "gpt-5.5");
+    }
+
+    #[test]
+    fn grouped_agent_key_is_not_a_model_name() {
+        let config = config_with_agent("codex", &["gpt-5.5"]);
+
+        assert!(config.code_agent_for_model("codex").is_none());
+    }
+
+    #[test]
+    fn supports_legacy_direct_agent_keys_without_models() {
+        let config = config_with_agent("gpt-5.5", &[]);
+        let agent = config
+            .code_agent_for_model("gpt-5.5")
+            .expect("legacy direct key should resolve");
+
+        assert_eq!(agent.group, "gpt-5.5");
+        assert_eq!(agent.model, "gpt-5.5");
+    }
 }

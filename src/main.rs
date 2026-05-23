@@ -102,7 +102,7 @@ enum TaskCommand {
 enum ChatCommand {
     /// Start a new interactive chat session.
     New {
-        /// Streaming-capable runner key to use instead of prompting.
+        /// Streaming-capable model name to use instead of prompting.
         #[arg(long)]
         runner: Option<String>,
     },
@@ -489,9 +489,8 @@ fn write_terminal_line(stdout: &mut io::Stdout, line: &str) -> Result<()> {
 async fn chat_new(config: Config, runner: Option<String>) -> Result<()> {
     let runner = choose_chat_runner(&config, runner)?;
     let agent_config = config
-        .code_agents
-        .get(&runner)
-        .with_context(|| format!("missing code_agents.{runner}"))?;
+        .code_agent_for_model(&runner)
+        .with_context(|| format!("missing code_agents model {runner}"))?;
 
     set_chat_selection_state(&config, ChatStateValue::SelectingNew).await?;
     let mut agent = CodexChatAgent::connect_with_context(
@@ -514,9 +513,8 @@ async fn chat_session(config: Config, session_id: Option<String>) -> Result<()> 
     let state = load_recovered_chat_state(&config).await?;
     let session = choose_chat_session(&state, session_id)?;
     let agent_config = config
-        .code_agents
-        .get(&session.runner)
-        .with_context(|| format!("missing code_agents.{}", session.runner))?;
+        .code_agent_for_model(&session.runner)
+        .with_context(|| format!("missing code_agents model {}", session.runner))?;
 
     set_chat_selection_state(&config, ChatStateValue::SelectingSession).await?;
     let mut agent = CodexChatAgent::connect_with_context(

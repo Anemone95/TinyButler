@@ -71,7 +71,7 @@ session: independent
 timeout: 3600
 ```
 
-For agent tasks, `agents` is the required ordered list of local `~/.tinybutler/config.yaml` keys under `code_agents`. Use a one-element list for a single code-agent runner. TinyButler only reports the task as failed after the final agent fails. The default templates include `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`.
+For agent tasks, `agents` is the required ordered list of model names from local `~/.tinybutler/config.yaml` under `code_agents.<group>.models`. Use a one-element list for a single model. TinyButler only reports the task as failed after the final model fails. The default templates group models under `gemini` and `codex`, including `gemini-3.1-flash-lite`, `gpt-5.3-codex-spark`, and `gpt-5.5`.
 
 Shell task:
 
