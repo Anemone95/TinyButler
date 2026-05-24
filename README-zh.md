@@ -14,7 +14,7 @@ Codex/Claude automation功能可能满足了我的需求, 但是 (1) 他们至�
 
 # 小帮手设计哲学
 1. 直接使用本机的code agent CLI, 省去重新登录或者需要API的麻烦.
-2. 提供skills, 鼓励用户直接使用code agent配置定时任务或是管理小帮手配置.
+2. 提供skills, 鼓励用户直接使用telegram chat 连接 code agent配置定时任务或是管理小帮手配置.
 3. 只提供少量cli和telegram bridge接口, 用户使用code agent或是直接通过文件管理定时任务.
 
 # 安装
