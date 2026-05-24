@@ -641,7 +641,12 @@ async fn handle_bare_chat_text(
             return send_markdown_text_to_chat(config, chat_id, "Chat bridge is busy").await;
         }
         ChatStateValue::SelectingNew | ChatStateValue::SelectingSession => {
-            return send_markdown_text_to_chat(config, chat_id, "Choose from the menu first").await;
+            return send_markdown_text_to_chat(
+                config,
+                chat_id,
+                chat_selection_text_prompt(state.state),
+            )
+            .await;
         }
         ChatStateValue::Inactive => return Ok(()),
     }
@@ -692,6 +697,14 @@ async fn handle_bare_chat_text(
         *abort_sender_for_task.lock().expect("abort mutex poisoned") = None;
     });
     Ok(())
+}
+
+fn chat_selection_text_prompt(state: ChatStateValue) -> &'static str {
+    match state {
+        ChatStateValue::SelectingNew => "Use /new to create a session first",
+        ChatStateValue::SelectingSession => "Choose a session from the menu first",
+        _ => "Choose from the menu first",
+    }
 }
 
 fn telegram_chat_turn_text(text: &str, reply_to: Option<&TelegramMessage>) -> String {
@@ -2184,6 +2197,18 @@ mod tests {
             assert!(!command.description.contains("tinybulter"));
             assert!(command.description.len() <= 16);
         }
+    }
+
+    #[test]
+    fn bare_text_prompts_match_chat_selection_state() {
+        assert_eq!(
+            chat_selection_text_prompt(ChatStateValue::SelectingNew),
+            "Use /new to create a session first"
+        );
+        assert_eq!(
+            chat_selection_text_prompt(ChatStateValue::SelectingSession),
+            "Choose a session from the menu first"
+        );
     }
 
     #[test]

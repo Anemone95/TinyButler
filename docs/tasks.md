@@ -94,7 +94,7 @@ Task behavior starts from local CLI commands. TinyButler provides a task selecto
 
 `/tasks` shows the same task list as Telegram buttons. Selecting a task opens the task detail view.
 
-After a task is selected, TinyButler first shows task details formatted as Markdown from the `task.yaml`, including name, enabled state, type, schedule (human-readable schedule description from `croner`), timeout, session mode, and description (100 words from either `agent.md` or `run.sh`).
+After a task is selected, TinyButler first shows task details formatted as Markdown from the `task.yaml`, including name, enabled state, type, schedule (human-readable schedule description from `croner`), timeout, session mode, and content (100 words from either `agent.md` or `run.sh`).
 
 The selected-task view then offers these actions:
 

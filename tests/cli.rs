@@ -680,7 +680,7 @@ fn task_run_maintains_monthly_log_archives() {
 }
 
 #[test]
-fn selected_task_detail_formats_task_fields_without_file_contents() {
+fn selected_task_detail_formats_task_fields_with_content_preview() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
@@ -694,9 +694,33 @@ fn selected_task_detail_formats_task_fields_without_file_contents() {
     assert!(out.contains("**Task:** `smoke-task`"));
     assert!(out.contains("**type:** `Agent`"));
     assert!(out.contains("**schedule:** At 09:00. (0 9 * * *)"));
-    assert!(!out.contains("**agent.md:**"));
+    assert!(out.contains("**content:** `agent.md`"));
+    assert!(out.contains("```markdown\nInspect this task directory"));
     assert!(!out.contains("**task.yaml:**"));
-    assert!(!out.contains("Inspect this task directory"));
+}
+
+#[test]
+fn selected_task_detail_limits_content_preview_to_first_100_words() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = temp.path();
+
+    let init = run_tinybutler(home, &["init"]);
+    assert!(init.status.success(), "{}", stderr(&init));
+
+    let task_dir = home.join("tasks/smoke-task");
+    let long_prompt = (1..=105)
+        .map(|index| format!("word-{index:03}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    std::fs::write(task_dir.join("agent.md"), long_prompt).expect("write long prompt");
+
+    let detail = run_tinybutler_with_input(home, &["tasks"], "smoke-task\n");
+    assert!(detail.status.success(), "{}", stderr(&detail));
+    let out = stdout(&detail);
+
+    assert!(out.contains("word-100"));
+    assert!(out.contains("\n...\n```"));
+    assert!(!out.contains("word-101"));
 }
 
 #[test]

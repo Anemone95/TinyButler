@@ -28,6 +28,7 @@ use crate::telegram;
 
 const LOG_PREVIEW_EDGE_LINES: usize = 7;
 const LOG_PREVIEW_MAX_LINE_CHARS: usize = 80;
+const TASK_CONTENT_PREVIEW_WORDS: usize = 100;
 
 /// Long-running scheduler bound to one TinyButler home directory.
 pub struct Scheduler {
@@ -241,8 +242,20 @@ impl Scheduler {
     /// Build the selected-task detail text shown before action choices.
     pub async fn task_detail_text(&self, name: &str) -> Result<String> {
         let task = self.find_task(name).await?;
+        let (content_path, content_info) = match &task.task_type {
+            TaskType::Agent => (task.agent_path(), "markdown"),
+            TaskType::Command => (task.run_script_path(), "bash"),
+        };
+        let content_text = fs::read_to_string(&content_path)
+            .await
+            .with_context(|| format!("failed to read {}", content_path.display()))?;
+        let content_file = content_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("content");
+        let content_preview = task_content_preview(&content_text);
         Ok(format!(
-            "**Task:** `{}`\n\n**enabled:** `{}`\n**type:** `{:?}`\n**agents:** `{}`\n**schedule:** {}\n**timeout:** `{}s`\n**session:** `{:?}`",
+            "**Task:** `{}`\n\n**enabled:** `{}`\n**type:** `{:?}`\n**agents:** `{}`\n**schedule:** {}\n**timeout:** `{}s`\n**session:** `{:?}`\n**content:** `{}`\n{}",
             task.name,
             task.enabled,
             task.task_type,
@@ -250,6 +263,8 @@ impl Scheduler {
             format_schedule_for_display(&task.schedule),
             task.timeout,
             task.session,
+            content_file,
+            markdown_code_fence(content_info, &content_preview),
         ))
     }
 
@@ -651,6 +666,39 @@ fn truncate_log_preview_line(line: &str) -> String {
         .take(LOG_PREVIEW_MAX_LINE_CHARS.saturating_sub(3))
         .chain("...".chars())
         .collect()
+}
+
+fn task_content_preview(text: &str) -> String {
+    let mut word_count = 0usize;
+    let mut in_word = false;
+    let mut last_word_end = 0usize;
+    let mut truncated = false;
+
+    for (index, ch) in text.char_indices() {
+        if ch.is_whitespace() {
+            in_word = false;
+            continue;
+        }
+
+        if !in_word {
+            word_count += 1;
+            if word_count > TASK_CONTENT_PREVIEW_WORDS {
+                truncated = true;
+                break;
+            }
+            in_word = true;
+        }
+        last_word_end = index + ch.len_utf8();
+    }
+
+    let mut preview = text[..last_word_end].trim().to_string();
+    if preview.is_empty() {
+        return "-".to_string();
+    }
+    if truncated {
+        preview.push_str("\n...");
+    }
+    preview
 }
 
 fn markdown_code_fence(info: &str, text: &str) -> String {
