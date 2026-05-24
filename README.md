@@ -8,7 +8,7 @@ It simply calls local code-agent CLIs, so it does not need extra authentication,
 # Why TinyButler Exists
 
 I have tried OpenClaw and Hermes. Their scheduled-task features fascinated me, and I often used them for tasks such as monitoring home cameras, cheap flight tickets, and discounted products.
-However, their frameworks are heavy. That makes the programs buggy on one hand and consumes a large number of my tokens on the other.
+However, their frameworks are heavy. That makes the programs unstable on one hand and consumes a large number of my tokens on the other.
 
 After careful thought, I realized that what I actually need is a personal assistant that can automatically set up tasks and run them on schedule. Memory and similar capabilities can naturally be handled by large companies such as Claude and Codex; I do not need to worry about them myself.
 For some one-off heavyweight tasks, I think today's Codex/Claude remote modes are more suitable.

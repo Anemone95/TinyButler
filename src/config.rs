@@ -73,7 +73,7 @@ impl Config {
     /// Load config from `home_override` or from the user's default TinyButler home.
     pub fn load(home_override: Option<PathBuf>) -> Result<Self> {
         let home = home_override
-            .or_else(|| dirs::home_dir().map(|p| p.join(".tinybutler")))
+            .or_else(default_tinybutler_home)
             .context("could not determine TinyButler home")?;
         let home = normalize_path_for_identity(&home)?;
 
@@ -367,6 +367,16 @@ pub fn linux_process_start_time_ticks(pid: u32) -> Result<u64> {
         .context("failed to parse process stat start time")?
         .parse::<u64>()
         .context("failed to parse process stat start time")
+}
+
+/// Resolve the default TinyButler home without pulling in a platform helper crate.
+fn default_tinybutler_home() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = PathBuf::from(home);
+    if home.as_os_str().is_empty() {
+        return None;
+    }
+    Some(home.join(".tinybutler"))
 }
 
 fn normalize_path_for_identity(path: &Path) -> Result<PathBuf> {

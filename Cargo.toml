@@ -2,6 +2,7 @@
 name = "tinybutler"
 version = "0.1.0"
 edition = "2024"
+license = "BSD-3-Clause"
 
 [dependencies]
 anyhow = "1"
@@ -11,7 +12,6 @@ clap = { version = "4", features = ["derive"] }
 codex-codes = "0.129.2"
 croner = "3.0.1"
 crossterm = "0.28"
-dirs = "5"
 flate2 = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
