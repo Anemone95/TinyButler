@@ -66,7 +66,7 @@ telegram:
   chat_id: "123456789"
 ```
 
-For detailed configuration instructions, ask your LLM to read `docs/chatbridge.md` and explain it to you.
+For detailed configuration instructions, ask your LLM after it reads `docs/chatbridge.md`.
 
 Also configure code-agent information:
 
@@ -77,7 +77,7 @@ code_agents:
     ...
 ```
 
-For detailed configuration instructions, ask your LLM to read `docs/configuration.md` and explain it to you.
+For detailed configuration instructions, ask your LLM after it reads`docs/configuration.md`.
 
 # Telegram Commands
 
