@@ -120,7 +120,7 @@ code_agents:
 
 ## 任务示例
 
-普通脚本任务：
+普通脚本任务`task.yaml`：
 
 ```yaml
 name: regular-check
@@ -139,7 +139,7 @@ set -euo pipefail
 printf '**regular-check ok:** `%s`\n' "$(date --iso-8601=seconds)"
 ```
 
-Agent 任务：
+Agent 任务`task.yaml`：
 
 ```yaml
 name: smoke-task
