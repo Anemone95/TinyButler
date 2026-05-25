@@ -77,7 +77,11 @@ code_agents:
     ...
 ```
 
-For detailed configuration instructions, ask your LLM after it reads`docs/configuration.md`.
+For detailed configuration instructions, ask your LLM after it reads `docs/configuration.md`.
+
+# Usage
+
+After configuration, use `/new` in Telegram to start a new session. You can then deploy tasks by chatting with the Telegram bot. TinyButler will decide from the task description whether to write a program for the task or run it through an agent, and you will receive the task result at the scheduled time.
 
 # Telegram Commands
 

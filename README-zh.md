@@ -71,6 +71,9 @@ code_agents:
 ```
 详细配置请让你的LLM阅读`docs/configuration.md`文件后解释给你听!
 
+# 用法
+配置完成后, 在telegram中使用`\new`新建一个会话, 之后可以通过与 telegram 机器人对话部署任务, 小帮手会根据任务描述选择写一个程序执行任务或者是使用agent执行, 随后你会在固定时间收到任务执行的结果.
+
 # telegram 支持的指令
 * `/tasks`, 列出定时任务, 状态, 以及试运行一次任务
 * `/new`, 启动一个新session
