@@ -106,9 +106,9 @@ Use a chat-state lock file, for example `~/.tinybutler/chat.lock`, to serialize 
 
 Only one active turn may exist per TinyButler home. A competing local REPL, Telegram turn, or second daemon instance must receive a busy or locked response.
 
-On startup or before handling a chat command, if `chat_state.json` says a session is busy, TinyButler must verify the recorded process or request is still alive.
+On daemon startup, if `chat_state.json` says a daemon-owned Telegram session is busy or aborting, TinyButler must clear the in-flight turn state before starting Telegram ingress. A daemon restart cannot resume the in-process Telegram turn that owned the busy marker. Daemon startup must not clear a live local CLI chat turn.
 
-If the recorded busy process is not alive, mark the turn failed or aborted, clear busy state, persist `last_error`, and keep the last resumable session id when valid.
+Before handling a chat command, if `chat_state.json` says a session is busy, TinyButler must verify the recorded process or request is still alive. If the recorded busy process is not alive, mark the turn failed or aborted, clear busy state, persist `last_error`, and keep the last resumable session id when valid.
 
 ## State Machine
 

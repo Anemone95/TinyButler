@@ -21,8 +21,9 @@ use tracing_subscriber::EnvFilter;
 
 use tinybutler::chat::{
     ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatRuntimeState, ChatSession,
-    ChatStateValue, CodexChatAgent, chat_working_directory, codex_streaming_model_names,
-    load_recovered_chat_state, mark_turn_aborting, mark_turn_finished, mark_turn_started,
+    ChatStateValue, CodexChatAgent, chat_working_directory, clear_busy_chat_state_on_daemon_start,
+    codex_streaming_model_names, load_recovered_chat_state, mark_turn_aborting, mark_turn_finished,
+    mark_turn_started,
 };
 use tinybutler::config::{Config, DaemonPidRecord, read_daemon_pid_record};
 use tinybutler::scheduler::Scheduler;
@@ -126,6 +127,7 @@ async fn main() -> Result<()> {
         Command::Init => config.init_home().await,
         Command::Daemon { interval_seconds } => {
             let scheduler = Scheduler::new(config.clone());
+            clear_busy_chat_state_on_daemon_start(&config).await?;
             if telegram_configured(&config) {
                 if let Err(err) = telegram::send_text(
                     &config,

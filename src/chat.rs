@@ -215,11 +215,53 @@ pub async fn load_recovered_chat_state(config: &Config) -> Result<ChatRuntimeSta
         state.current_request_id = None;
         state.current_process_id = None;
         state.busy_since = None;
-        state.last_error =
-            Some("recovered stale busy chat state after process restart".to_string());
+        state.last_error = Some("recovered stale busy chat state".to_string());
         state.save_atomic(&path).await?;
     }
     Ok(state)
+}
+
+/// Clear any in-flight chat turn left behind by a daemon restart.
+pub async fn clear_busy_chat_state_on_daemon_start(config: &Config) -> Result<()> {
+    let Some(_lock) = ChatLock::acquire(config.chat_lock_path())? else {
+        return Ok(());
+    };
+    let path = config.chat_state_path();
+    let mut state = ChatRuntimeState::load(&path).await?;
+    if !daemon_start_should_clear_busy_state(&state) {
+        return Ok(());
+    }
+    state.state = if state.active_session_id.is_some() {
+        ChatStateValue::ActiveIdle
+    } else {
+        ChatStateValue::Inactive
+    };
+    state.current_request_id = None;
+    state.current_process_id = None;
+    state.busy_since = None;
+    state.last_error = Some("cleared busy chat state after daemon restart".to_string());
+    state.save_atomic(&path).await
+}
+
+fn daemon_start_should_clear_busy_state(state: &ChatRuntimeState) -> bool {
+    if !matches!(
+        state.state,
+        ChatStateValue::ActiveBusy | ChatStateValue::Aborting
+    ) {
+        return false;
+    }
+    if !state
+        .current_request_id
+        .as_deref()
+        .is_some_and(|request_id| request_id.starts_with("telegram:"))
+    {
+        return false;
+    }
+    match state.current_process_id {
+        Some(pid) if pid == std::process::id() => true,
+        Some(pid) if process_is_alive(pid) => false,
+        _ => true,
+    }
 }
 
 fn busy_state_is_stale(state: &ChatRuntimeState) -> bool {
@@ -1008,6 +1050,142 @@ mod tests {
             .expect("recover state");
         assert_eq!(recovered.state, ChatStateValue::ActiveIdle);
         assert!(recovered.last_error.is_some());
+    }
+
+    #[tokio::test]
+    async fn daemon_start_clears_telegram_busy_state_for_current_process() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let config = Config {
+            home: temp.path().to_path_buf(),
+            telegram: Default::default(),
+            code_agents: Default::default(),
+        };
+        let mut state = ChatRuntimeState {
+            state: ChatStateValue::ActiveBusy,
+            active_runner: Some("codex".to_string()),
+            active_session_id: Some("thread-1".to_string()),
+            current_request_id: Some("telegram:1".to_string()),
+            current_process_id: Some(std::process::id()),
+            busy_since: Some(Local::now()),
+            ..ChatRuntimeState::default()
+        };
+        state
+            .save_atomic(&config.chat_state_path())
+            .await
+            .expect("save state");
+
+        clear_busy_chat_state_on_daemon_start(&config)
+            .await
+            .expect("clear busy state");
+        let recovered = ChatRuntimeState::load(&config.chat_state_path())
+            .await
+            .expect("load state");
+        assert_eq!(recovered.state, ChatStateValue::ActiveIdle);
+        assert_eq!(recovered.current_request_id, None);
+        assert_eq!(recovered.current_process_id, None);
+        assert_eq!(recovered.busy_since, None);
+        assert!(recovered.last_error.is_some());
+    }
+
+    #[tokio::test]
+    async fn daemon_start_clears_telegram_aborting_state_for_current_process() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let config = Config {
+            home: temp.path().to_path_buf(),
+            telegram: Default::default(),
+            code_agents: Default::default(),
+        };
+        let mut state = ChatRuntimeState {
+            state: ChatStateValue::Aborting,
+            active_runner: Some("codex".to_string()),
+            active_session_id: Some("thread-1".to_string()),
+            current_request_id: Some("telegram:1".to_string()),
+            current_process_id: Some(std::process::id()),
+            busy_since: Some(Local::now()),
+            ..ChatRuntimeState::default()
+        };
+        state
+            .save_atomic(&config.chat_state_path())
+            .await
+            .expect("save state");
+
+        clear_busy_chat_state_on_daemon_start(&config)
+            .await
+            .expect("clear busy state");
+        let recovered = ChatRuntimeState::load(&config.chat_state_path())
+            .await
+            .expect("load state");
+        assert_eq!(recovered.state, ChatStateValue::ActiveIdle);
+        assert_eq!(recovered.current_request_id, None);
+        assert_eq!(recovered.current_process_id, None);
+        assert_eq!(recovered.busy_since, None);
+        assert!(recovered.last_error.is_some());
+    }
+
+    #[tokio::test]
+    async fn daemon_start_keeps_local_busy_state_for_current_process() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let config = Config {
+            home: temp.path().to_path_buf(),
+            telegram: Default::default(),
+            code_agents: Default::default(),
+        };
+        let mut state = ChatRuntimeState {
+            state: ChatStateValue::ActiveBusy,
+            active_runner: Some("codex".to_string()),
+            active_session_id: Some("thread-1".to_string()),
+            current_request_id: Some("local:1".to_string()),
+            current_process_id: Some(std::process::id()),
+            busy_since: Some(Local::now()),
+            ..ChatRuntimeState::default()
+        };
+        state
+            .save_atomic(&config.chat_state_path())
+            .await
+            .expect("save state");
+
+        clear_busy_chat_state_on_daemon_start(&config)
+            .await
+            .expect("clear busy state");
+        let loaded = ChatRuntimeState::load(&config.chat_state_path())
+            .await
+            .expect("load state");
+        assert_eq!(loaded.state, ChatStateValue::ActiveBusy);
+        assert_eq!(loaded.current_request_id.as_deref(), Some("local:1"));
+    }
+
+    #[tokio::test]
+    async fn daemon_start_does_not_fail_when_chat_lock_exists() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let config = Config {
+            home: temp.path().to_path_buf(),
+            telegram: Default::default(),
+            code_agents: Default::default(),
+        };
+        let mut state = ChatRuntimeState {
+            state: ChatStateValue::ActiveBusy,
+            active_runner: Some("codex".to_string()),
+            active_session_id: Some("thread-1".to_string()),
+            current_request_id: Some("telegram:1".to_string()),
+            current_process_id: Some(std::process::id()),
+            busy_since: Some(Local::now()),
+            ..ChatRuntimeState::default()
+        };
+        state
+            .save_atomic(&config.chat_state_path())
+            .await
+            .expect("save state");
+        let _lock = ChatLock::acquire(config.chat_lock_path())
+            .expect("acquire lock")
+            .expect("lock available");
+
+        clear_busy_chat_state_on_daemon_start(&config)
+            .await
+            .expect("startup cleanup should not fail on lock contention");
+        let loaded = ChatRuntimeState::load(&config.chat_state_path())
+            .await
+            .expect("load state");
+        assert_eq!(loaded.state, ChatStateValue::ActiveBusy);
     }
 
     #[tokio::test]
