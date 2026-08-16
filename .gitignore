@@ -3,4 +3,3 @@
 /.idea/
 *.log
 __pycache__/
-vendor/**/.cargo-ok

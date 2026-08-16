@@ -557,14 +557,14 @@ impl ChatAgent for CodexChatAgent {
         let thread = self
             .client
             .thread_start(&ThreadStartParams {
-                instructions: Some(chat_bridge_instructions(self.instruction_context)),
-                tools: None,
+                developer_instructions: Some(chat_bridge_instructions(self.instruction_context)),
+                ..Default::default()
             })
             .await
             .context("failed to start Codex thread")?;
         let session = ChatSession {
             runner: self.runner.clone(),
-            session_id: thread.thread_id().to_string(),
+            session_id: thread.thread.id,
             title: None,
             last_activity_at: Local::now(),
         };
@@ -596,10 +596,12 @@ impl ChatAgent for CodexChatAgent {
                 thread_id: session.session_id.clone(),
                 input: vec![UserInput::Text {
                     text: message.to_string(),
+                    text_elements: None,
                 }],
                 model: None,
-                reasoning_effort: None,
+                effort: None,
                 sandbox_policy: None,
+                ..Default::default()
             })
             .await
         {
@@ -801,8 +803,20 @@ fn codex_message_to_chat_event(
                 ChatEvent::TurnCompleted
             }
             Notification::Error(error) => {
-                *current_turn_id = None;
-                ChatEvent::TurnFailed(format!("{error:?}"))
+                let message = if error.error.message.trim().is_empty() {
+                    error
+                        .error
+                        .additional_details
+                        .unwrap_or_else(|| "Codex app-server error".to_string())
+                } else {
+                    error.error.message
+                };
+                if error.will_retry {
+                    ChatEvent::Warning(message)
+                } else {
+                    *current_turn_id = None;
+                    ChatEvent::TurnFailed(message)
+                }
             }
             other => ChatEvent::Info(other.method().to_string()),
         },
@@ -972,13 +986,23 @@ mod tests {
     #[test]
     fn decodes_current_codex_app_server_thread_item_types() {
         let samples = [
-            serde_json::json!({ "id": "hook_1", "type": "hookPrompt" }),
+            serde_json::json!({ "fragments": [], "id": "hook_1", "type": "hookPrompt" }),
             serde_json::json!({ "id": "plan_1", "text": "check state", "type": "plan" }),
-            serde_json::json!({ "id": "dyn_1", "type": "dynamicToolCall" }),
-            serde_json::json!({ "id": "collab_1", "type": "collabAgentToolCall" }),
-            serde_json::json!({ "id": "img_1", "status": "completed", "type": "imageGeneration" }),
-            serde_json::json!({ "id": "review_1", "type": "enteredReviewMode" }),
-            serde_json::json!({ "id": "review_2", "type": "exitedReviewMode" }),
+            serde_json::json!({
+                "arguments": {}, "id": "dyn_1", "status": "completed",
+                "tool": "test", "type": "dynamicToolCall"
+            }),
+            serde_json::json!({
+                "agentsStates": {}, "id": "collab_1", "receiverThreadIds": [],
+                "senderThreadId": "thread_1", "status": "completed",
+                "tool": "spawnAgent", "type": "collabAgentToolCall"
+            }),
+            serde_json::json!({
+                "id": "img_1", "result": "", "status": "completed",
+                "type": "imageGeneration"
+            }),
+            serde_json::json!({ "id": "review_1", "review": "", "type": "enteredReviewMode" }),
+            serde_json::json!({ "id": "review_2", "review": "", "type": "exitedReviewMode" }),
             serde_json::json!({ "id": "compact_1", "type": "contextCompaction" }),
         ];
 
@@ -995,6 +1019,86 @@ mod tests {
 
             assert!(matches!(notification, Notification::ItemStarted(_)));
         }
+    }
+
+    #[test]
+    fn decodes_codex_thread_resume_with_max_reasoning_effort() {
+        let response = serde_json::json!({
+            "approvalPolicy": "never",
+            "approvalsReviewer": null,
+            "cwd": "/tmp",
+            "model": "gpt-5.6-sol",
+            "modelProvider": "openai",
+            "reasoningEffort": "max",
+            "sandbox": {},
+            "thread": {
+                "cliVersion": "0.147.0",
+                "createdAt": 1779053681_i64,
+                "cwd": "/tmp",
+                "ephemeral": false,
+                "id": "thread_1",
+                "modelProvider": "openai",
+                "preview": "",
+                "sessionId": "thread_1",
+                "source": {},
+                "status": {},
+                "turns": [],
+                "updatedAt": 1779053681_i64
+            }
+        });
+        let response: codex_codes::protocol_generated::types::ThreadResumeResponse =
+            serde_json::from_value(response).expect("max reasoning effort should decode");
+
+        assert_eq!(
+            serde_json::to_value(response.reasoning_effort).expect("serialize reasoning effort"),
+            serde_json::json!("max")
+        );
+    }
+
+    #[test]
+    fn reports_non_retryable_codex_error_message_and_clears_turn() {
+        let notification = Notification::from_envelope(
+            methods::ERROR,
+            Some(serde_json::json!({
+                "error": { "message": "request failed" },
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "willRetry": false
+            })),
+        )
+        .expect("error notification should decode");
+        let mut current_turn_id = Some("turn_1".to_string());
+
+        let event = codex_message_to_chat_event(
+            ServerMessage::Notification(notification),
+            &mut current_turn_id,
+        );
+
+        assert_eq!(event, ChatEvent::TurnFailed("request failed".to_string()));
+        assert_eq!(current_turn_id, None);
+    }
+
+    #[test]
+    fn keeps_turn_active_when_codex_error_will_retry() {
+        let notification = Notification::from_envelope(
+            methods::ERROR,
+            Some(serde_json::json!({
+                "error": { "message": "temporary failure" },
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "willRetry": true
+            })),
+        )
+        .expect("retryable error notification should decode");
+        let mut current_turn_id = Some("turn_1".to_string());
+
+        let event = codex_message_to_chat_event(
+            ServerMessage::Notification(notification),
+            &mut current_turn_id,
+        );
+
+        assert_eq!(event, ChatEvent::Warning("temporary failure".to_string()));
+        assert_eq!(current_turn_id.as_deref(), Some("turn_1"));
     }
 
     #[test]
