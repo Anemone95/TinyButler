@@ -137,18 +137,6 @@ impl Config {
         })
     }
 
-    /// Return all configured model references that have interactive stream args.
-    pub fn streaming_model_names(&self) -> Vec<String> {
-        let mut models = Vec::new();
-        for (group, config) in &self.code_agents {
-            if config.stream_args.is_empty() {
-                continue;
-            }
-            models.extend(config.model_references(group));
-        }
-        models
-    }
-
     /// Validate local code-agent command templates.
     pub fn validate_code_agents(&self) -> Result<()> {
         for (group, config) in &self.code_agents {
@@ -191,11 +179,22 @@ impl CodeAgentConfig {
         }
         validate_optional_model_args(group, "new_args", &self.new_args)?;
         validate_optional_model_args(group, "resume_args", &self.resume_args)?;
-        validate_optional_model_args(group, "stream_args", &self.stream_args)?;
         validate_optional_prompt_args(group, "new_args", &self.new_args)?;
         validate_optional_prompt_args(group, "resume_args", &self.resume_args)?;
-        validate_optional_prompt_args(group, "stream_args", &self.stream_args)?;
+        self.validate_chat_args(group)?;
         validate_resume_args(group, &self.resume_args)?;
+        Ok(())
+    }
+
+    fn validate_chat_args(&self, group: &str) -> Result<()> {
+        if self.stream_args.is_empty() {
+            return Ok(());
+        }
+        let prompt_mode = prompt_mode_for_args(&self.stream_args)
+            .with_context(|| format!("invalid code_agents.{group}.stream_args"))?;
+        if prompt_mode != PromptMode::Stdin {
+            bail!("code_agents.{group}.stream_args must use {{stdin}}");
+        }
         Ok(())
     }
 }
@@ -607,17 +606,27 @@ mod tests {
     #[test]
     fn rejects_stream_args_without_prompt_or_stdin_marker() {
         let mut config = config_with_agent("codex", &["gpt-5.5"]);
-        config
-            .code_agents
-            .get_mut("codex")
-            .expect("codex config")
-            .stream_args = vec!["app-server".to_string(), "model={model}".to_string()];
+        let agent = config.code_agents.get_mut("codex").expect("codex config");
+        agent.stream_args = vec!["--opaque".to_string(), "model={model}".to_string()];
 
         let err = config
             .validate_code_agents()
             .expect_err("missing prompt delivery marker should be rejected");
 
         assert!(format!("{err:#}").contains("must contain {prompt} or {stdin}"));
+    }
+
+    #[test]
+    fn accepts_opaque_chat_stream_args_with_stdin() {
+        let mut config = config_with_agent("gemini", &["gemini-test"]);
+        let agent = config.code_agents.get_mut("gemini").expect("gemini config");
+        agent.stream_args = ["--wrapper-option", "anything", "{stdin}"]
+            .map(str::to_string)
+            .to_vec();
+
+        config
+            .validate_code_agents()
+            .expect("generic validation should not inspect runner-specific flags");
     }
 
     #[test]

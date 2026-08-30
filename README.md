@@ -25,7 +25,7 @@ Codex/Claude automation features may satisfy my needs, but: (1) they still do no
 
 - Suitable for Linux servers, Raspberry Pi-style machines, and other small always-on hosts.
 - Scheduled tasks can be plain Bash scripts or local code-agent CLI tasks.
-- Codex interactive streaming is integrated; Claude/Gemini streaming is still TODO.
+- Codex app-server (through `codex`) and Gemini (through `agy`) interactive streaming are integrated; Claude streaming is still TODO.
 - TinyButler does not provide a web UI and does not host models.
 
 ## Prerequisites
@@ -33,7 +33,7 @@ Codex/Claude automation features may satisfy my needs, but: (1) they still do no
 - A Linux environment.
 - Rust/Cargo and `make`.
 - User-level systemd, used by `make install` to install the daemon.
-- If you want to use agent tasks, install and log in to the corresponding local CLI first, such as `codex`, `gemini`, or future `claude`.
+- If you want to use agent tasks, install and log in to the corresponding local CLI first, such as `codex`, Antigravity CLI (`agy`) for Gemini, or future `claude`. Gemini chat streaming requires `agy` 1.1.15 or newer.
 - If you want to use Telegram, prepare a bot token and the chat id allowed to operate TinyButler.
 
 ## Installation
@@ -96,6 +96,38 @@ Also configure code-agent information. Below is a simplified example:
 
 ```yaml
 code_agents:
+  gemini:
+    command: agy
+    models:
+      - gemini-3.7-flash-low
+    new_args:
+      - "--new-project"
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--output-format"
+      - json
+      - "--print={prompt}"
+    resume_args:
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--conversation"
+      - "{sessionId}"
+      - "--output-format"
+      - json
+      - "--print={prompt}"
+    stream_args:
+      - "--new-project"
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--input-format"
+      - stream-json
+      - "--output-format"
+      - stream-json
+      - "{stdin}"
+
   codex:
     command: /usr/bin/codex
     models:
@@ -111,12 +143,14 @@ code_agents:
       - app-server
       - "-c"
       - model="{model}"
+      - "-c"
+      - sandbox_mode="danger-full-access"
       - "--listen"
       - "stdio://"
       - "{stdin}"
 ```
 
-Models listed under `models` are referenced in tasks and chat sessions as `group/model`, for example `codex/gpt-5.5`. `{model}`, `{prompt}`, and `{stdin}` are placeholders replaced by TinyButler at runtime.
+Models listed under `models` are referenced in tasks and chat sessions as `group/model`, for example `codex/gpt-5.5` or `gemini/gemini-3.7-flash-low`. Non-empty `stream_args` enables interactive chat and contains the complete fresh-process argument vector. TinyButler expands placeholders, removes `{stdin}`, and otherwise preserves the configured arguments. The Agy and Codex modules recognize the configured `command`.
 
 For detailed configuration instructions, ask your LLM after it reads `docs/configuration.md` and `docs/chatbridge.md`.
 
@@ -196,5 +230,5 @@ BSD-3-Clause. See `LICENSE`.
 
 ## TODO
 
-- Support Claude/Gemini streaming
+- Support Claude streaming
 - Support WeChat, Discord, and other chat integrations

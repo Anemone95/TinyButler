@@ -20,10 +20,10 @@ use tokio::time::{Instant, sleep};
 use tracing_subscriber::EnvFilter;
 
 use tinybutler::chat::{
-    ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatRuntimeState, ChatSession,
-    ChatStateValue, CodexChatAgent, chat_working_directory, clear_busy_chat_state_on_daemon_start,
-    codex_streaming_model_names, load_recovered_chat_state, mark_turn_aborting, mark_turn_finished,
-    mark_turn_started,
+    BoxedChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatRuntimeState, ChatSession,
+    ChatStateValue, chat_streaming_model_names, chat_working_directory,
+    clear_busy_chat_state_on_daemon_start, connect_chat_agent, load_recovered_chat_state,
+    mark_turn_aborting, mark_turn_finished, mark_turn_started,
 };
 use tinybutler::config::{Config, DaemonPidRecord, read_daemon_pid_record};
 use tinybutler::scheduler::Scheduler;
@@ -494,7 +494,7 @@ async fn chat_new(config: Config, runner: Option<String>) -> Result<()> {
         .with_context(|| format!("missing code_agents model {runner}"))?;
 
     set_chat_selection_state(&config, ChatStateValue::SelectingNew).await?;
-    let mut agent = CodexChatAgent::connect_with_context(
+    let mut agent = connect_chat_agent(
         runner.clone(),
         agent_config,
         Some(chat_working_directory(&config)),
@@ -518,7 +518,7 @@ async fn chat_session(config: Config, session_id: Option<String>) -> Result<()> 
         .with_context(|| format!("missing code_agents model {}", session.runner))?;
 
     set_chat_selection_state(&config, ChatStateValue::SelectingSession).await?;
-    let mut agent = CodexChatAgent::connect_with_context(
+    let mut agent = connect_chat_agent(
         session.runner.clone(),
         agent_config,
         Some(chat_working_directory(&config)),
@@ -560,15 +560,15 @@ async fn record_selected_session(config: &Config, session: ChatSession) -> Resul
 }
 
 fn choose_chat_runner(config: &Config, runner: Option<String>) -> Result<String> {
-    let runners = codex_streaming_model_names(config);
+    let runners = chat_streaming_model_names(config);
     if runners.is_empty() {
-        bail!("no configured Codex streaming runners under code_agents");
+        bail!("no configured chat streaming runners under code_agents");
     }
     if let Some(runner) = runner {
         if runners.contains(&runner) {
             return Ok(runner);
         }
-        bail!("runner {runner} is not a supported Codex streaming runner");
+        bail!("runner {runner} is not a supported chat streaming runner");
     }
     println!("Select a model:");
     for (index, runner) in runners.iter().enumerate() {
@@ -627,7 +627,7 @@ fn choose_chat_session(
         .context("session selection is out of range")
 }
 
-async fn chat_repl(config: Config, mut agent: CodexChatAgent) -> Result<()> {
+async fn chat_repl(config: Config, mut agent: BoxedChatAgent) -> Result<()> {
     loop {
         print!("chat> ");
         io::stdout().flush()?;
@@ -650,7 +650,7 @@ async fn chat_repl(config: Config, mut agent: CodexChatAgent) -> Result<()> {
 
 async fn run_local_chat_turn(
     config: &Config,
-    agent: &mut CodexChatAgent,
+    agent: &mut BoxedChatAgent,
     message: &str,
 ) -> Result<()> {
     mark_turn_started(

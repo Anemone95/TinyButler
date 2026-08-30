@@ -227,6 +227,38 @@ is a backend label such as `codex` or `gemini`:
 
 ```yaml
 code_agents:
+  gemini:
+    command: agy
+    models:
+      - gemini-3.7-flash-low
+    new_args:
+      - "--new-project"
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--output-format"
+      - json
+      - "--print={prompt}"
+    resume_args:
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--conversation"
+      - "{sessionId}"
+      - "--output-format"
+      - json
+      - "--print={prompt}"
+    stream_args:
+      - "--new-project"
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--input-format"
+      - stream-json
+      - "--output-format"
+      - stream-json
+      - "{stdin}"
+
   codex:
     command: /usr/bin/codex
     models:
@@ -274,23 +306,30 @@ argument templates. Do not put runner-specific flags in `task.yaml`.
 
 Task `agents` entries are `group/model` references to models listed under
 `code_agents.<group>.models`. TinyButler resolves each reference to its configured
-backend group. In `new_args`, `resume_args`, and `stream_args`, use `{prompt}`
-where the prompt should be inserted as an argument, or include one literal
-`{stdin}` argument to send the prompt through standard input. TinyButler removes
-the `{stdin}` marker before spawning scheduled task commands; Codex app-server
-stream configs use `{stdin}` only as the explicit TinyButler prompt-delivery
-marker.
+backend group. In scheduled `new_args` and `resume_args`, use `{prompt}` where
+the prompt should be inserted as an argument, or include one literal `{stdin}`
+argument to send the prompt through standard input. TinyButler removes the
+`{stdin}` marker before spawning scheduled task commands.
+
+For interactive chat, configure non-empty `stream_args` as the complete fresh
+process argument vector with exactly one `{stdin}` marker. TinyButler expands
+documented placeholders, removes that marker, and otherwise preserves the list.
+The Codex and Agy modules recognize the configured `command`; adapter selection
+does not inspect the arguments. Antigravity CLI (`agy`) 1.1.15+ is required.
+The template's fresh `agy` chat command includes `--new-project`; the adapter
+preserves that configured flag for fresh processes, then replaces it with
+`--conversation` when resuming.
 
 For scheduled task runners, `{model}` is replaced with the unqualified model
 name from the matched `group/model` reference.
 
 When starting a chat session, TinyButler shows grouped model references such as
-`codex/gpt-5.5`; `{model}` in `stream_args` is expanded to the unqualified model
-name from that reference.
+`codex/gpt-5.5` or `gemini/gemini-3.7-flash-low`. The concrete module recognizes
+the configured command; selection does not inspect `stream_args` or the group name.
 
 Common template model names:
 
-- `gemini/gemini-3.1-flash-lite`
+- `gemini/gemini-3.7-flash-low`
 - `codex/gpt-5.3-codex-spark`
 - `codex/gpt-5.5`
 

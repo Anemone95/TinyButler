@@ -59,13 +59,15 @@ The chat bridge session display and tasks configuration use `group_name/model_na
 
 `stream_args` is used for the chat interface, where the chat bridge can output tokens as a stream.
 It is optional for a model group, but only models in a group that has `stream_args` can be listed in the new session command.
+TinyButler expands documented placeholders, removes the `{stdin}` marker, and passes every other configured argument to the command unchanged and in order.
 
-`new_args`, `resume_args`, and `stream_args` must contain a placeholder (`{model}`) so the actual task or chat session can choose the model later.
+`new_args` and `resume_args` must contain a placeholder (`{model}`) so the actual task can choose the model later.
 They must also contain either `{prompt}` so TinyButler can place the prompt, or a `{stdin}` argument to show that the prompt should be put into standard input.
 `resume_args` must contain `{sessionId}` for `session: reuse` tasks.
 
+`stream_args` must contain exactly one `{stdin}` marker. It may contain `{model}`; TinyButler expands that placeholder when present but does not require or interpret any runner-specific flags.
 
-A runner supports interactive streaming when it has `stream_args` or a dedicated Rust stream adapter.
+A runner supports interactive streaming when it has non-empty `stream_args` and its configured `command` is recognized by a dedicated Rust adapter.
 
 ## Runner Flag Boundary
 
@@ -73,7 +75,7 @@ TinyButler does not manage Codex, Gemini, Claude, sandbox, or safety flags in `t
 
 Users own runner flags through local `code_agents` config.
 
-The default templates use Codex `danger-full-access` and Gemini `--approval-mode yolo`; users may change those choices in local config.
+The default templates use Codex `danger-full-access` and `agy --dangerously-skip-permissions`; users may change those choices in local config.
 
 ## Session State
 

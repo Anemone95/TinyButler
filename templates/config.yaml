@@ -4,41 +4,36 @@ telegram:
 
 code_agents:
   gemini:
-    command: /usr/bin/gemini
+    command: agy
     models:
-      - gemini-3.1-flash-lite
+      - gemini-3.7-flash-low
     new_args:
+      - "--new-project"
       - "--model"
       - "{model}"
-      - "--skip-trust"
-      - "--approval-mode"
-      - yolo
+      - "--dangerously-skip-permissions"
       - "--output-format"
       - json
-      - "--prompt"
-      - "{prompt}"
+      - "--print={prompt}"
     resume_args:
       - "--model"
       - "{model}"
-      - "--skip-trust"
-      - "--approval-mode"
-      - yolo
-      - "--resume"
+      - "--dangerously-skip-permissions"
+      - "--conversation"
       - "{sessionId}"
       - "--output-format"
       - json
-      - "--prompt"
-      - "{prompt}"
+      - "--print={prompt}"
     stream_args:
+      - "--new-project"
       - "--model"
       - "{model}"
-      - "--skip-trust"
-      - "--approval-mode"
-      - yolo
+      - "--dangerously-skip-permissions"
+      - "--input-format"
+      - stream-json
       - "--output-format"
       - stream-json
-      - "--prompt"
-      - "{prompt}"
+      - "{stdin}"
 
   codex:
     command: /usr/bin/codex
@@ -55,7 +50,6 @@ code_agents:
       - "-m"
       - "{model}"
       - "-c"
-      - service_tier="fast"
       - "--skip-git-repo-check"
       - "{prompt}"
     resume_args:
@@ -67,7 +61,6 @@ code_agents:
       - "-c"
       - sandbox_mode="danger-full-access"
       - "-c"
-      - service_tier="fast"
       - "--skip-git-repo-check"
       - "{sessionId}"
       - "{prompt}"

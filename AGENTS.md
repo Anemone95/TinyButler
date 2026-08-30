@@ -74,7 +74,10 @@ TinyButler/
     cron_expr.rs      # cron normalization and schedule descriptions
     scheduler.rs      # daemon loop, due checks, and run orchestration
     runner.rs         # shell and agent task execution
-    chat.rs           # interactive chat bridge state and adapters
+    chat.rs           # shared interactive chat state, adapter trait, and factory
+    chat/
+      agy.rs          # Antigravity CLI NDJSON chat adapter
+      codex.rs        # Codex app-server JSON-RPC chat adapter
     telegram.rs       # Telegram delivery and ingress helpers
     state.rs          # per-task state.json model and persistence
     lock.rs           # per-task lock file acquisition and cleanup
@@ -137,5 +140,4 @@ Write clear comments for human code review. Each source file should start with a
 
 ## Open Work
 
-- Add the Gemini interactive streaming adapter.
 - Add the Claude runner.

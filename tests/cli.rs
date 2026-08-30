@@ -296,7 +296,7 @@ code_agents:
 }
 
 #[test]
-fn init_stream_runners_include_complete_streaming_flags() {
+fn init_stream_runners_declare_adapters_and_opaque_stdin_args() {
     let temp = tempfile::tempdir().expect("temp dir");
     let home = temp.path();
 
@@ -306,31 +306,78 @@ fn init_stream_runners_include_complete_streaming_flags() {
     let config_text = std::fs::read_to_string(home.join("config.yaml")).expect("config");
     let config: serde_yaml::Value = serde_yaml::from_str(&config_text).expect("parse config");
 
-    let gemini_stream_args = config["code_agents"]["gemini"]["stream_args"]
+    let gemini = &config["code_agents"]["gemini"];
+    assert_eq!(gemini["command"].as_str(), Some("agy"));
+    assert!(gemini.get("chat_agent").is_none());
+    assert!(
+        gemini["models"]
+            .as_sequence()
+            .expect("gemini models")
+            .iter()
+            .any(|model| model.as_str() == Some("gemini-3.7-flash-low"))
+    );
+    let gemini_stream_args = gemini["stream_args"]
         .as_sequence()
         .expect("gemini stream args");
     assert!(
-        gemini_stream_args
-            .windows(2)
-            .any(|pair| pair[0].as_str() == Some("--output-format")
-                && pair[1].as_str() == Some("stream-json")),
-        "gemini streaming should use stream-json output"
+        gemini_stream_args.windows(2).any(|pair| {
+            pair[0].as_str() == Some("--input-format") && pair[1].as_str() == Some("stream-json")
+        }),
+        "agy stream_args should retain stream-json input"
+    );
+    assert!(
+        gemini_stream_args.windows(2).any(|pair| {
+            pair[0].as_str() == Some("--output-format") && pair[1].as_str() == Some("stream-json")
+        }),
+        "agy stream_args should retain stream-json output"
     );
     assert!(
         gemini_stream_args
-            .windows(2)
-            .any(|pair| pair[0].as_str() == Some("--approval-mode")
-                && pair[1].as_str() == Some("yolo")),
-        "gemini streaming should include approval mode"
+            .iter()
+            .any(|arg| arg.as_str() == Some("--dangerously-skip-permissions")),
+        "agy streaming should include the configured permission mode"
     );
     assert!(
-        gemini_stream_args.windows(2).any(
-            |pair| pair[0].as_str() == Some("--prompt") && pair[1].as_str() == Some("{prompt}")
-        ),
-        "gemini streaming should include an explicit prompt placeholder"
+        gemini_stream_args
+            .iter()
+            .any(|arg| arg.as_str() == Some("{stdin}")),
+        "agy streaming should receive NDJSON through stdin"
     );
+    assert!(
+        !gemini_stream_args
+            .iter()
+            .any(|arg| arg.as_str().is_some_and(|arg| arg.contains("{prompt}"))),
+        "agy streaming must not pass a command-line prompt"
+    );
+    assert!(
+        gemini_stream_args
+            .iter()
+            .any(|arg| arg.as_str() == Some("--new-project")),
+        "agy stream_args should retain its fresh-process project flag"
+    );
+    let gemini_new_args = gemini["new_args"].as_sequence().expect("agy new args");
+    assert!(
+        gemini_new_args
+            .iter()
+            .any(|arg| arg.as_str() == Some("--new-project")),
+        "agy fresh scheduled runs should bind the task directory to a new project"
+    );
+    assert!(
+        gemini_new_args
+            .iter()
+            .any(|arg| arg.as_str() == Some("--print={prompt}")),
+        "agy scheduled runs should keep the print flag and prompt in one argument"
+    );
+    let gemini_resume_args = gemini["resume_args"]
+        .as_sequence()
+        .expect("agy resume args");
+    assert!(gemini_resume_args.windows(2).any(|pair| {
+        pair[0].as_str() == Some("--conversation") && pair[1].as_str() == Some("{sessionId}")
+    }));
 
-    let codex_stream_args = config["code_agents"]["codex"]["stream_args"]
+    let codex = &config["code_agents"]["codex"];
+    assert!(codex.get("chat_agent").is_none());
+    let codex_stream_args = codex["stream_args"]
         .as_sequence()
         .expect("codex stream args");
     let codex_stream_arg_text = codex_stream_args
@@ -338,12 +385,14 @@ fn init_stream_runners_include_complete_streaming_flags() {
         .filter_map(|value| value.as_str())
         .collect::<Vec<_>>();
     assert!(
-        codex_stream_arg_text.contains(&"app-server"),
-        "codex streaming should use app-server"
+        codex_stream_arg_text.contains(&"app-server")
+            && codex_stream_arg_text.contains(&"--listen")
+            && codex_stream_arg_text.contains(&"stdio://"),
+        "codex stream_args should retain the complete app-server invocation"
     );
     assert!(
         codex_stream_arg_text.contains(&"model=\"{model}\""),
-        "codex streaming should set model through the selected model placeholder"
+        "codex stream_args should retain the model placeholder"
     );
     assert!(
         codex_stream_arg_text.contains(&"sandbox_mode=\"danger-full-access\""),

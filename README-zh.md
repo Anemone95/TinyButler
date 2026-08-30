@@ -23,7 +23,7 @@ Codex/Claude automation 功能可能满足了我的需求，但是：(1) 他们�
 
 - 适合运行在 Linux 服务器、树莓派等小型常开机器上。
 - 定时任务可以是普通 Bash 脚本，也可以调用本地 code agent CLI。
-- Codex 交互式 streaming 已接入；Claude/Gemini streaming 仍在 TODO。
+- Codex, `agy` 交互式 streaming 已接入；Claude streaming 仍在 TODO。
 - TinyButler 不提供 Web UI，也不托管模型。
 
 ## 前置条件
@@ -31,7 +31,7 @@ Codex/Claude automation 功能可能满足了我的需求，但是：(1) 他们�
 - Linux 环境。
 - Rust/Cargo 和 `make`。
 - user-level systemd，用于 `make install` 安装守护进程。
-- 如果要使用 agent 任务，需要提前安装并登录对应的本地 CLI，例如 `codex`、`gemini` 或未来的 `claude`。
+- 如果要使用 agent 任务，需要提前安装并登录对应的本地 CLI，例如 `codex`、Gemini 使用的 Antigravity CLI（`agy`）或未来的 `claude`。Gemini chat streaming 需要 `agy` 1.1.15 或更高版本。
 - 如果要使用 Telegram，需要准备 bot token 和允许操作的 chat id。
 
 ## 安装
@@ -94,6 +94,38 @@ telegram:
 
 ```yaml
 code_agents:
+  gemini:
+    command: agy
+    models:
+      - gemini-3.7-flash-low
+    new_args:
+      - "--new-project"
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--output-format"
+      - json
+      - "--print={prompt}"
+    resume_args:
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--conversation"
+      - "{sessionId}"
+      - "--output-format"
+      - json
+      - "--print={prompt}"
+    stream_args:
+      - "--new-project"
+      - "--model"
+      - "{model}"
+      - "--dangerously-skip-permissions"
+      - "--input-format"
+      - stream-json
+      - "--output-format"
+      - stream-json
+      - "{stdin}"
+
   codex:
     command: /usr/bin/codex
     models:
@@ -109,12 +141,14 @@ code_agents:
       - app-server
       - "-c"
       - model="{model}"
+      - "-c"
+      - sandbox_mode="danger-full-access"
       - "--listen"
       - "stdio://"
       - "{stdin}"
 ```
 
-`models` 中的模型会在任务和聊天会话中写成 `group/model`，例如 `codex/gpt-5.5`。`{model}`、`{prompt}`、`{stdin}` 是 TinyButler 在运行时替换的占位符。
+`models` 中的模型会在任务和聊天会话中写成 `group/model`，例如 `codex/gpt-5.5` 或 `gemini/gemini-3.7-flash-low`。非空 `stream_args` 启用交互式 chat，并包含 fresh process 的完整参数。TinyButler 展开占位符、移除 `{stdin}`，其余参数保持原样。Agy 和 Codex 模块各自识别配置的 `command`。
 
 详细配置请让你的 LLM 阅读 `docs/configuration.md`、`docs/chatbridge.md` 后解释给你听。
 
@@ -194,5 +228,5 @@ BSD-3-Clause，详见 `LICENSE`。
 
 ## TODO
 
-- 支持 Claude/Gemini streaming
+- 支持 Claude streaming
 - 支持微信、Discord 等其他聊天接入方式

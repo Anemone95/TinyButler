@@ -409,7 +409,7 @@ fn summarize(stdout: &str, stderr: &str) -> String {
     lines.into_iter().rev().collect::<Vec<_>>().join("\n")
 }
 
-/// Extract Codex session identifiers from newline-delimited JSON output.
+/// Extract common code-agent session identifiers from JSON output.
 fn extract_session_id(stdout: &str) -> Option<String> {
     for line in stdout.lines() {
         let Ok(value) = serde_json::from_str::<Value>(line) else {

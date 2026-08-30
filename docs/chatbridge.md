@@ -162,7 +162,7 @@ Aborted or failed turns remain resumable only if the adapter confirms the sessio
 
 ## ChatAgent Adapter Architecture
 
-TinyButler implements the chat bridge inside the Rust daemon with `teloxide` plus `codex-codes`.
+TinyButler implements the chat bridge inside the Rust daemon with `teloxide`, `codex-codes`, and direct child-process adapters.
 
 This MVP architecture preserves one config file, one daemon, one Telegram ingress path, and the CLI-first command model.
 
@@ -170,4 +170,16 @@ Use `codex-codes` for Codex app-server JSON-RPC streaming, multi-turn threads, a
 
 The `ChatAgent` trait should model starting a session, listing resumable sessions, resuming a selected session, sending one user turn, streaming assistant/tool events, and aborting the active turn.
 
-Gemini and future Claude support need separate adapters behind the same `ChatAgent` boundary.
+Use a separate Antigravity CLI adapter for Gemini models configured through `agy`. The adapter starts `agy` with multi-turn stream input and output, writes NDJSON `user` events to standard input, and parses the `init`, `step_update`, and terminal `result` events documented by `agy`.
+
+The `init.conversation_id` value is the stable session id. A fresh `agy` process emits it before the first user prompt, so TinyButler can preserve the invariant that a session is recorded only after the adapter returns a stable id. Fresh processes receive the configured `stream_args` unchanged after placeholder expansion and `{stdin}` removal. When resuming, the Agy adapter removes the configured fresh-only `--new-project` flag, appends `--conversation <session-id>`, and rejects an `init` event that returns a different id.
+
+An `agent_response` `text_delta` becomes assistant output. Completed tool-step output becomes tool output. A `SUCCESS` result completes the turn, and any other terminal status normally becomes a failed turn. After TinyButler has successfully sent SIGINT for an explicit abort, the next terminal result completes the abort regardless of whether that `agy` version reports `INTERRUPTED`, `CANCELED`, or an `ERROR` such as `timeout waiting for response`; the stable conversation id remains resumable.
+
+Because `agy` stream input has no separate developer-instruction channel, the adapter runs one hidden initialization turn containing TinyButler's transport instructions after a new or explicitly resumed session and discards the acknowledgment. This makes the instructions durable before Telegram releases the selection-time adapter process. Ordinary technical-turn resumes do not inject them again.
+
+Local REPL sessions keep one `agy` process open across turns. Telegram may reconnect a process to the saved conversation for each incoming turn. Closing the input stream ends an idle process cleanly; abort sends `SIGINT` to the active `agy` process, treats its next terminal result as abort completion, and keeps the stable conversation id resumable.
+
+Keep the shared session state, `ChatAgent` trait, events, and adapter factory in `src/chat.rs`. Keep the Codex and Agy implementations in separate `src/chat/codex.rs` and `src/chat/agy.rs` modules so the shared layer does not understand either wire protocol.
+
+Non-empty `stream_args` enables chat for a configured backend. The adapter factory asks the Codex and Agy modules which one recognizes the configured command executable; it must not infer the implementation by scanning `stream_args` or the group name. Generic chat handling expands placeholders, removes the stdin marker, and otherwise preserves the complete configured argument vector. Each concrete adapter owns its wire protocol and necessary session-lifecycle adaptation. Future Claude support should use another adapter behind the same boundary.

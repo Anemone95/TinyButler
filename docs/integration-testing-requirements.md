@@ -155,7 +155,11 @@ When real credentials and time allow, test each configured real runner:
 - Resume scheduled mode: `resume_args` with `session: reuse`.
 - Interactive stream mode: `tinybutler chat new` for runners supported by the current Rust adapter.
 
-Gemini stream support is incomplete until the Gemini interactive streaming adapter is implemented. Until then, validate Gemini template `stream_args` and mark full Gemini streaming as not yet supported.
+Cover the `agy` adapter deterministically with a fake executable that emits the documented NDJSON protocol. At minimum, test initial conversation-id capture, assistant and tool deltas, successful completion, explicit resume arguments, terminal failures, malformed events, and abort behavior.
+
+Also confirm that non-empty `stream_args` enables chat, that generic handling expands documented placeholders and otherwise preserves the complete configured argument vector, and that adapter selection uses the configured command executable rather than inspecting `stream_args`.
+
+For a real Gemini smoke test, use `agy` 1.1.15 or newer and a configured model from `agy models`. Confirm that `tinybutler chat new --runner gemini/<model>` records the `init.conversation_id`, streams at least two turns in one local REPL, resumes the same conversation with `tinybutler chat session`, and leaves the session resumable after Ctrl+C aborts an active turn.
 
 ## Check Command Failure Cases
 

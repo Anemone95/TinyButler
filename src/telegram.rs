@@ -22,9 +22,10 @@ use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 
 use crate::chat::{
-    ChatAgent, ChatEvent, ChatInstructionContext, ChatLock, ChatSession, ChatStateValue,
-    CodexChatAgent, chat_working_directory, codex_streaming_model_names, is_codex_streaming_model,
-    load_recovered_chat_state, mark_chat_inactive, mark_turn_finished, mark_turn_started,
+    ChatEvent, ChatInstructionContext, ChatLock, ChatSession, ChatStateValue,
+    chat_streaming_model_names, chat_working_directory, connect_chat_agent,
+    is_chat_streaming_model, load_recovered_chat_state, mark_chat_inactive, mark_turn_finished,
+    mark_turn_started,
 };
 use crate::config::{Config, DaemonPidRecord, read_daemon_pid_record};
 use crate::scheduler::Scheduler;
@@ -391,14 +392,10 @@ async fn handle_tasks_command(config: &Config, chat_id: &str) -> Result<()> {
 }
 
 async fn handle_new_command(config: &Config, chat_id: &str) -> Result<()> {
-    let runners = codex_streaming_model_names(config);
+    let runners = chat_streaming_model_names(config);
     if runners.is_empty() {
-        return send_markdown_text_to_chat(
-            config,
-            chat_id,
-            "No Codex streaming runners configured",
-        )
-        .await;
+        return send_markdown_text_to_chat(config, chat_id, "No chat streaming runners configured")
+            .await;
     }
     set_telegram_selection_state(config, ChatStateValue::SelectingNew).await?;
     send_inline_menu(
@@ -761,7 +758,7 @@ async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Re
     let agent_config = config
         .code_agent_for_model(runner)
         .with_context(|| format!("missing code_agents model {runner}"))?;
-    if !is_codex_streaming_model(config, runner) {
+    if !is_chat_streaming_model(config, runner) {
         return send_markdown_text_to_chat(config, chat_id, "Runner no longer supports chat").await;
     }
     if !claim_telegram_selection(
@@ -774,7 +771,7 @@ async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Re
         return send_markdown_text_to_chat(config, chat_id, "Stale model selection").await;
     }
     let session_result = async {
-        let mut agent = CodexChatAgent::connect_with_context(
+        let mut agent = connect_chat_agent(
             runner.to_string(),
             agent_config,
             Some(chat_working_directory(config)),
@@ -838,7 +835,7 @@ async fn handle_session_callback(config: &Config, chat_id: &str, session_data: &
         return send_markdown_text_to_chat(config, chat_id, "Stale session selection").await;
     }
     let session_result = async {
-        let mut agent = CodexChatAgent::connect_with_context(
+        let mut agent = connect_chat_agent(
             session.runner.clone(),
             agent_config,
             Some(chat_working_directory(config)),
@@ -978,7 +975,7 @@ async fn run_telegram_chat_turn(
         .code_agent_for_model(&runner)
         .with_context(|| format!("missing code_agents model {runner}"))?;
     let working_directory = chat_working_directory(&config);
-    let mut agent = CodexChatAgent::connect_with_context(
+    let mut agent = connect_chat_agent(
         runner.clone(),
         agent_config,
         Some(working_directory.clone()),
