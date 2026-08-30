@@ -33,6 +33,7 @@ use crate::scheduler::Scheduler;
 /// Telegram parse mode used by TinyButler-generated and CLI-authored messages.
 pub const TELEGRAM_PARSE_MODE: &str = "MarkdownV2";
 const TELEGRAM_SESSION_PAGE_SIZE: usize = 5;
+const TELEGRAM_TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 
 /// Build the daemon startup notification sent when Telegram is configured.
 pub fn daemon_startup_notification_text(config: &Config) -> String {
@@ -56,6 +57,32 @@ pub enum IngressCommand {
 
 type AbortSender = oneshot::Sender<()>;
 type SharedAbort = Arc<Mutex<Option<AbortSender>>>;
+
+struct TypingIndicator {
+    refresh_task: tokio::task::JoinHandle<()>,
+}
+
+impl TypingIndicator {
+    async fn start(config: &Config, chat_id: &str) -> Self {
+        // Await the first action so agent startup never precedes Telegram feedback.
+        let _ = send_chat_action(config, chat_id, "typing").await;
+        let config = config.clone();
+        let chat_id = chat_id.to_string();
+        let refresh_task = tokio::spawn(async move {
+            loop {
+                sleep(TELEGRAM_TYPING_REFRESH_INTERVAL).await;
+                let _ = send_chat_action(&config, &chat_id, "typing").await;
+            }
+        });
+        Self { refresh_task }
+    }
+}
+
+impl Drop for TypingIndicator {
+    fn drop(&mut self) {
+        self.refresh_task.abort();
+    }
+}
 
 /// Send an ordinary Markdown text message to the configured chat.
 pub async fn send_text(config: &Config, text: &str) -> Result<()> {
@@ -656,6 +683,7 @@ async fn handle_bare_chat_text(
         .clone()
         .context("active chat session has no session id")?;
 
+    let typing_indicator = TypingIndicator::start(config, chat_id).await;
     set_check_reaction(config, chat_id, message_id).await.ok();
     mark_turn_started(config, format!("telegram:{message_id}")).await?;
     let (sender, receiver) = oneshot::channel();
@@ -672,6 +700,7 @@ async fn handle_bare_chat_text(
             session_id,
             text,
             receiver,
+            typing_indicator,
         )
         .await
         {
@@ -729,15 +758,18 @@ fn telegram_message_context_text(message: &TelegramMessage) -> Option<String> {
 }
 
 async fn handle_callback(config: &Config, callback: &TelegramCallbackQuery) -> Result<()> {
-    answer_callback_query(config, &callback.id, None).await?;
+    let data = callback.data.as_deref().unwrap_or_default();
+    answer_callback_query(config, &callback.id, chat_callback_acknowledgement(data)).await?;
     let message = callback
         .message
         .as_ref()
         .context("callback query has no message")?;
     let chat_id = message.chat.id.to_string();
-    let data = callback.data.as_deref().unwrap_or_default();
     if let Some(runner) = data.strip_prefix("tc_new:") {
         return handle_new_callback(config, &chat_id, runner).await;
+    }
+    if data == "tc_sessions_clear" {
+        return handle_session_clear_callback(config, &chat_id).await;
     }
     if let Some(session_data) = data.strip_prefix("tc_session:") {
         return handle_session_callback(config, &chat_id, session_data).await;
@@ -754,23 +786,37 @@ async fn handle_callback(config: &Config, callback: &TelegramCallbackQuery) -> R
     send_markdown_text_to_chat(config, &chat_id, "Stale TinyButler selection").await
 }
 
+fn chat_callback_acknowledgement(data: &str) -> Option<&'static str> {
+    if data.starts_with("tc_new:") {
+        Some("Model selected; starting session")
+    } else if data == "tc_sessions_clear" {
+        Some("Clearing all sessions")
+    } else if data.starts_with("tc_session:") {
+        Some("Session selected; resuming session")
+    } else {
+        None
+    }
+}
+
 async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Result<()> {
-    let agent_config = config
-        .code_agent_for_model(runner)
-        .with_context(|| format!("missing code_agents model {runner}"))?;
-    if !is_chat_streaming_model(config, runner) {
-        return send_markdown_text_to_chat(config, chat_id, "Runner no longer supports chat").await;
-    }
-    if !claim_telegram_selection(
-        config,
-        ChatStateValue::SelectingNew,
-        format!("callback:new:{runner}"),
-    )
-    .await?
-    {
-        return send_markdown_text_to_chat(config, chat_id, "Stale model selection").await;
-    }
-    let session_result = async {
+    let _typing_indicator = TypingIndicator::start(config, chat_id).await;
+
+    let session_result: Result<ChatSession> = async {
+        let agent_config = config
+            .code_agent_for_model(runner)
+            .with_context(|| format!("missing code_agents model {runner}"))?;
+        if !is_chat_streaming_model(config, runner) {
+            bail!("runner no longer supports chat");
+        }
+        if !claim_telegram_selection(
+            config,
+            ChatStateValue::SelectingNew,
+            format!("callback:new:{runner}"),
+        )
+        .await?
+        {
+            bail!("stale model selection");
+        }
         let mut agent = connect_chat_agent(
             runner.to_string(),
             agent_config,
@@ -778,17 +824,24 @@ async fn handle_new_callback(config: &Config, chat_id: &str, runner: &str) -> Re
             ChatInstructionContext::Telegram,
         )
         .await?;
-        agent.start_session().await
+        let session = agent.start_session().await?;
+        record_telegram_session(config, session.clone()).await?;
+        Ok(session)
     }
     .await;
     let session = match session_result {
         Ok(session) => session,
         Err(err) => {
             let _ = mark_turn_finished(config, None, Some(format!("{err:#}"))).await;
-            return Err(err);
+            warn!("failed to start Telegram chat session: {err:#}");
+            return send_markdown_text_to_chat(
+                config,
+                chat_id,
+                &chat_selection_failure_message("start chat session", &err),
+            )
+            .await;
         }
     };
-    record_telegram_session(config, session.clone()).await?;
     send_markdown_text_to_chat(
         config,
         chat_id,
@@ -814,7 +867,22 @@ async fn handle_session_more_callback(config: &Config, chat_id: &str, offset: &s
     send_session_page_menu(config, chat_id, &sessions, offset).await
 }
 
+async fn handle_session_clear_callback(config: &Config, chat_id: &str) -> Result<()> {
+    let Some(_lock) = ChatLock::acquire(config.chat_lock_path())? else {
+        bail!("chat bridge is locked by another process");
+    };
+    let mut state = load_recovered_chat_state(config).await?;
+    if state.state != ChatStateValue::SelectingSession {
+        return send_markdown_text_to_chat(config, chat_id, "Stale session selection").await;
+    }
+    let cleared = state.clear_sessions();
+    state.save_atomic(&config.chat_state_path()).await?;
+    let noun = if cleared == 1 { "session" } else { "sessions" };
+    send_markdown_text_to_chat(config, chat_id, &format!("Cleared {cleared} saved {noun}")).await
+}
+
 async fn handle_session_callback(config: &Config, chat_id: &str, session_data: &str) -> Result<()> {
+    let _typing_indicator = TypingIndicator::start(config, chat_id).await;
     let state = load_recovered_chat_state(config).await?;
     if state.state != ChatStateValue::SelectingSession {
         return send_markdown_text_to_chat(config, chat_id, "Stale session selection").await;
@@ -849,7 +917,13 @@ async fn handle_session_callback(config: &Config, chat_id: &str, session_data: &
         Ok(session) => session,
         Err(err) => {
             let _ = mark_turn_finished(config, None, Some(format!("{err:#}"))).await;
-            return Err(err);
+            warn!("failed to resume Telegram chat session: {err:#}");
+            return send_markdown_text_to_chat(
+                config,
+                chat_id,
+                &chat_selection_failure_message("resume chat session", &err),
+            )
+            .await;
         }
     };
     record_telegram_session(config, session.clone()).await?;
@@ -863,6 +937,10 @@ async fn handle_session_callback(config: &Config, chat_id: &str, session_data: &
         ),
     )
     .await
+}
+
+fn chat_selection_failure_message(action: &str, error: &anyhow::Error) -> String {
+    format!("Failed to {action}: {error:#}")
 }
 
 async fn send_session_page_menu(
@@ -896,6 +974,10 @@ fn session_page_buttons(sessions: &[ChatSession], offset: usize) -> Vec<(String,
             format!("tc_sessions_more:{next_offset}"),
         ));
     }
+    buttons.push((
+        "Clear all sessions".to_string(),
+        "tc_sessions_clear".to_string(),
+    ));
     buttons
 }
 
@@ -970,6 +1052,7 @@ async fn run_telegram_chat_turn(
     session_id: String,
     text: String,
     mut abort_receiver: oneshot::Receiver<()>,
+    _typing_indicator: TypingIndicator,
 ) -> Result<()> {
     let agent_config = config
         .code_agent_for_model(&runner)
@@ -992,16 +1075,6 @@ async fn run_telegram_chat_turn(
     agent.send_turn(&text).await?;
 
     let placeholder = send_markdown_text_to_chat_with_id(&config, &chat_id, "Working").await?;
-    let typing_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let typing_done_task = typing_done.clone();
-    let typing_config = config.clone();
-    let typing_chat = chat_id.clone();
-    tokio::spawn(async move {
-        while !typing_done_task.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = send_chat_action(&typing_config, &typing_chat, "typing").await;
-            sleep(Duration::from_secs(4)).await;
-        }
-    });
 
     let mut assistant_output = String::new();
     let mut tool_output = String::new();
@@ -1039,12 +1112,10 @@ async fn run_telegram_chat_turn(
                     }
                     Some(ChatEvent::ApprovalRequired(request)) => {
                         let error = format!("chat turn requires unsupported approval: {request}");
-                        typing_done.store(true, std::sync::atomic::Ordering::Relaxed);
                         mark_turn_finished(&config, agent.active_session(), Some(error.clone())).await?;
                         bail!("{error}");
                     }
                     Some(ChatEvent::TurnCompleted) => {
-                        typing_done.store(true, std::sync::atomic::Ordering::Relaxed);
                         let mut final_text = assistant_visible_text(&assistant_output);
                         let mut attachment_paths =
                             extract_outbound_attachment_paths(&assistant_output, &working_directory);
@@ -1068,12 +1139,10 @@ async fn run_telegram_chat_turn(
                         return Ok(());
                     }
                     Some(ChatEvent::TurnFailed(error)) => {
-                        typing_done.store(true, std::sync::atomic::Ordering::Relaxed);
                         mark_turn_finished(&config, agent.active_session(), Some(error.clone())).await?;
                         bail!("chat turn failed: {error}");
                     }
                     None => {
-                        typing_done.store(true, std::sync::atomic::Ordering::Relaxed);
                         mark_turn_finished(&config, agent.active_session(), Some("chat agent closed".to_string())).await?;
                         bail!("chat agent closed");
                     }
@@ -2153,6 +2222,31 @@ mod tests {
     }
 
     #[test]
+    fn model_selection_acknowledges_start_and_uses_typing_refresh() {
+        assert_eq!(
+            chat_callback_acknowledgement("tc_new:gemini/gemini-3.7-flash-low"),
+            Some("Model selected; starting session")
+        );
+        assert_eq!(TELEGRAM_TYPING_REFRESH_INTERVAL, Duration::from_secs(4));
+        assert_eq!(
+            chat_callback_acknowledgement("tc_sessions_clear"),
+            Some("Clearing all sessions")
+        );
+    }
+
+    #[test]
+    fn chat_selection_failures_are_user_visible_and_concise() {
+        let error = anyhow!("failed to start agy stream command agy: missing executable");
+
+        let message = chat_selection_failure_message("start chat session", &error);
+
+        assert_eq!(
+            message,
+            "Failed to start chat session: failed to start agy stream command agy: missing executable"
+        );
+    }
+
+    #[test]
     fn daemon_startup_notification_is_common_markdown() {
         let config = Config {
             home: PathBuf::from("/tmp/tinybutler-home"),
@@ -2360,12 +2454,16 @@ mod tests {
 
         let buttons = session_page_buttons(&sessions, 0);
 
-        assert_eq!(buttons.len(), 6);
+        assert_eq!(buttons.len(), 7);
         assert_eq!(buttons[0].0, "codex title-0");
         assert_eq!(buttons[0].1, format!("tc_session:0:{fingerprint}"));
+        assert!(buttons.contains(&("Show more".to_string(), "tc_sessions_more:5".to_string())));
         assert_eq!(
-            buttons.last().expect("show more button"),
-            &("Show more".to_string(), "tc_sessions_more:5".to_string())
+            buttons.last().expect("clear button"),
+            &(
+                "Clear all sessions".to_string(),
+                "tc_sessions_clear".to_string()
+            )
         );
     }
 
@@ -2377,7 +2475,7 @@ mod tests {
 
         let buttons = session_page_buttons(&sessions, 10);
 
-        assert_eq!(buttons.len(), 2);
+        assert_eq!(buttons.len(), 3);
         assert_eq!(
             buttons[0].1,
             format!("tc_session:10:{session_10_fingerprint}")
@@ -2387,6 +2485,7 @@ mod tests {
             format!("tc_session:11:{session_11_fingerprint}")
         );
         assert!(!buttons.iter().any(|(label, _)| label == "Show more"));
+        assert_eq!(buttons.last().expect("clear button").1, "tc_sessions_clear");
     }
 
     #[test]
@@ -2396,7 +2495,7 @@ mod tests {
 
         let buttons = session_page_buttons(&sessions, 0);
 
-        assert_eq!(buttons.len(), 1);
+        assert_eq!(buttons.len(), 2);
         assert!(buttons[0].1.starts_with("tc_session:0:"));
         assert!(buttons[0].1.len() < 64);
         assert!(!buttons[0].1.contains(&sessions[0].session_id));

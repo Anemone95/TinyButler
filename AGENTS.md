@@ -130,7 +130,7 @@ Write clear comments for human code review. Each source file should start with a
 
 - `make`: build the debug binary with `cargo build`.
 - `make verify`: run `cargo fmt`, `cargo check`, `cargo test`, and `cargo clippy -- -D warnings`.
-- `make install`: install the release binary, run `tinybutler init` to create missing home files and refresh project skills under `~/.tinybutler/.agents/skills/`, initialize `~/.tinybutler` as a git repository when needed, write the user service, enable and restart it, and try to enable linger for boot startup.
+- `make install`: install the release binary, run `tinybutler init` to create missing home files and refresh project skills under `~/.tinybutler/.agents/skills/`, initialize `~/.tinybutler` as a git repository when needed, write the user service with `~/.local/bin` and the Cargo bin directory on `PATH`, enable and restart it, and try to enable linger for boot startup.
 - `make syncskill`: copy project skills from `templates/.agents/skills/` into `~/.tinybutler/.agents/skills/` and restart the TinyButler user service.
 - `make uninstall`: stop and disable the user service, remove the service file, remove the installed binary, and remove the installed TinyButler project skill directory from `~/.tinybutler/.agents/skills/`.
 - `make service-status`: show the user service status.

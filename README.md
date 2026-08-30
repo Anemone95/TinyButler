@@ -50,7 +50,7 @@ Install the release binary and enable the user-level systemd daemon:
 make install
 ```
 
-`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs the release binary to `~/.cargo/bin/tinybutler`. It runs `tinybutler init`, creating missing home files without overwriting user configuration or tasks, and refreshes the TinyButler operation skill under `~/.tinybutler/.agents/skills/`. If `~/.tinybutler` does not contain `.git`, it initializes that directory as a git repository, writes `~/.config/systemd/user/tinybutler.service`, enables and restarts the user service, and lets the service start at boot.
+`make install` follows Cargo conventions and runs `cargo install --path . --force`, which usually installs the release binary to `~/.cargo/bin/tinybutler`. It runs `tinybutler init`, creating missing home files without overwriting user configuration or tasks, and refreshes the TinyButler operation skill under `~/.tinybutler/.agents/skills/`. If `~/.tinybutler` does not contain `.git`, it initializes that directory as a git repository, writes `~/.config/systemd/user/tinybutler.service` with `~/.local/bin` and the Cargo bin directory on `PATH`, enables and restarts the user service, and lets the service start at boot.
 
 ## Quick Start
 
@@ -216,7 +216,7 @@ tinybutler telegram --attachment <path>
 
 * `/tasks`: list scheduled tasks, view status, and run a task once
 * `/new`: start a new session
-* `/session`: use a previous session
+* `/session`: use a previous session or clear all saved sessions
 * `/abort`: abort the active interactive agent turn
 * `/restart`: restart the service
 

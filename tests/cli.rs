@@ -977,3 +977,16 @@ fn chat_commands_are_public_cli_surface() {
     assert!(out.contains("new"));
     assert!(out.contains("session"));
 }
+
+#[test]
+fn installed_service_path_includes_common_user_cli_directories() {
+    let makefile = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Makefile"))
+        .expect("read Makefile");
+
+    assert!(
+        makefile.contains(
+            "Environment=PATH=$(HOME)/.local/bin:$${install_root%/}/bin:/usr/local/bin:/usr/bin:/bin"
+        ),
+        "the user service must find agent CLIs installed under ~/.local/bin and Cargo bin"
+    );
+}

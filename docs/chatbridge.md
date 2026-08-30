@@ -30,9 +30,21 @@ Telegram command mapping, authorization, bot menu registration, and polling are 
 
 `/new` should return an inline menu containing only streaming-capable model references, as defined by [configuration.md](configuration.md). The code-agent model entries are shown as `group/model`, for example `codex/gpt-5.5`.
 
-Selecting a model starts a fresh Telegram chat bridge session.
+Selecting a model must immediately acknowledge the callback with a starting toast and
+set the Telegram chat action to `typing` before TinyButler validates or starts the
+adapter. TinyButler keeps refreshing `typing` while startup is pending and does not
+send a separate persistent `Starting` message. A successful start sends only
+`Started <model> session <id>`; every validation, state, adapter, or
+session-persistence failure sends an explicit `Failed to start chat session: <error>`
+message.
 
-`/session` should return previous chat sessions newest-first in pages of five. When more sessions remain, the menu includes `Show more` to display the next page; the button is omitted on the final page. Selecting a session resumes it as the active Telegram chat bridge session.
+`/session` should return previous chat sessions newest-first in pages of five. When
+more sessions remain, the menu includes `Show more` to display the next page; the
+button is omitted on the final page. Every page includes `Clear all sessions`.
+Selecting it removes all TinyButler-saved session metadata, detaches the active
+session, and returns the bridge to `inactive`; it does not delete provider-owned Codex
+threads or Agy conversations. Selecting an ordinary session resumes it as the active
+Telegram chat bridge session.
 
 After a session is active, non-command Telegram text in the authorized main chat is redirected to that session instead of being ignored.
 
@@ -46,7 +58,10 @@ Telegram does not need an explicit exit command for the MVP. The active session 
 
 When a redirected user message is accepted, TinyButler should acknowledge the Telegram message with a check mark reaction when Telegram supports reactions. If reactions fail, continue without failing the turn.
 
-While the code agent is running, TinyButler should keep sending Telegram `typing` chat actions until the turn completes.
+When an active session receives a Telegram message, TinyButler must await the first
+`typing` chat action before connecting to, resuming, or sending a turn to the code
+agent. It then refreshes `typing` every four seconds until the turn completes or
+fails.
 
 TinyButler should stream code-agent output back to Telegram as the model produces it, using throttled message edits for growing assistant text.
 

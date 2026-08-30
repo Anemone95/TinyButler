@@ -139,6 +139,20 @@ impl ChatRuntimeState {
         sessions.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
         sessions
     }
+
+    /// Remove every saved session and detach the active chat bridge session.
+    pub fn clear_sessions(&mut self) -> usize {
+        let cleared = self.sessions.len();
+        self.sessions.clear();
+        self.state = ChatStateValue::Inactive;
+        self.active_runner = None;
+        self.active_session_id = None;
+        self.current_request_id = None;
+        self.current_process_id = None;
+        self.busy_since = None;
+        self.last_error = None;
+        cleared
+    }
 }
 
 /// Owned home-level chat lock that removes the lock file on drop.
@@ -842,6 +856,38 @@ mod tests {
             .expect("recover state");
         assert_eq!(recovered.state, ChatStateValue::ActiveIdle);
         assert!(recovered.last_error.is_some());
+    }
+
+    #[test]
+    fn clearing_sessions_resets_active_chat_state() {
+        let mut state = ChatRuntimeState {
+            state: ChatStateValue::SelectingSession,
+            active_runner: Some("codex-max/gpt-5.6-sol".to_string()),
+            active_session_id: Some("thread-1".to_string()),
+            sessions: vec![ChatSession {
+                runner: "codex-max/gpt-5.6-sol".to_string(),
+                session_id: "thread-1".to_string(),
+                title: Some("test".to_string()),
+                last_activity_at: Local::now(),
+            }],
+            current_request_id: Some("callback:clear".to_string()),
+            current_process_id: Some(std::process::id()),
+            busy_since: Some(Local::now()),
+            last_error: Some("old error".to_string()),
+            updated_at: Some(Local::now()),
+        };
+
+        let cleared = state.clear_sessions();
+
+        assert_eq!(cleared, 1);
+        assert_eq!(state.state, ChatStateValue::Inactive);
+        assert_eq!(state.active_runner, None);
+        assert_eq!(state.active_session_id, None);
+        assert!(state.sessions.is_empty());
+        assert_eq!(state.current_request_id, None);
+        assert_eq!(state.current_process_id, None);
+        assert_eq!(state.busy_since, None);
+        assert_eq!(state.last_error, None);
     }
 
     #[test]

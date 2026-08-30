@@ -52,6 +52,12 @@ Each group entry defines `command` and `models`, and may define `new_args`, `res
 
 `models` lists the unqualified model names exposed by that backend group.
 The chat bridge session display and tasks configuration use `group_name/model_name`, for example `codex/gpt-5.5`.
+When the same command or model appears in multiple groups with different runtime
+options, the group name should describe that execution profile rather than repeat the
+model family. For example, use `codex-max/gpt-5.6-sol` and
+`codex-xhigh/gpt-5.6-sol` for otherwise-identical Codex profiles whose meaningful
+difference is `model_reasoning_effort`. Renaming a group also requires updating every
+matching `agents` reference in task files.
 
 `new_args` is used for creating a session for a `session: reuse` task's first run or each run of a `session: independent` task.
 

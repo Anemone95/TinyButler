@@ -66,6 +66,7 @@ install:
 		'[Service]' \
 		'Type=simple' \
 		"ExecStart=$$bin --home $(TINYBUTLER_HOME) daemon" \
+		"Environment=PATH=$(HOME)/.local/bin:$${install_root%/}/bin:/usr/local/bin:/usr/bin:/bin" \
 		'Restart=on-failure' \
 		'RestartSec=5' \
 		'Environment=RUST_LOG=tinybutler=info' \

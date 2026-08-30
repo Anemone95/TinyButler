@@ -48,7 +48,7 @@ make
 make install
 ```
 
-`make install` 遵循 Cargo 约定，会运行 `cargo install --path . --force`，通常会把 release 版本二进制文件安装到 `~/.cargo/bin/tinybutler`。它会运行 `tinybutler init`，在不覆盖用户配置或任务的前提下创建缺失的 home 文件，并刷新 `~/.tinybutler/.agents/skills/` 下的 TinyButler 操作 skill。如果 `~/.tinybutler` 缺少 `.git`，它会把该目录初始化为 git 仓库，写入 `~/.config/systemd/user/tinybutler.service`，启用并重启用户服务，让服务可以在开机时启动。
+`make install` 遵循 Cargo 约定，会运行 `cargo install --path . --force`，通常会把 release 版本二进制文件安装到 `~/.cargo/bin/tinybutler`。它会运行 `tinybutler init`，在不覆盖用户配置或任务的前提下创建缺失的 home 文件，并刷新 `~/.tinybutler/.agents/skills/` 下的 TinyButler 操作 skill。如果 `~/.tinybutler` 缺少 `.git`，它会把该目录初始化为 git 仓库，写入 `~/.config/systemd/user/tinybutler.service`，为服务的 `PATH` 加入 `~/.local/bin` 和 Cargo bin 目录，启用并重启用户服务，让服务可以在开机时启动。
 
 ## 快速开始
 
@@ -214,7 +214,7 @@ tinybutler telegram --attachment <path>
 
 * `/tasks`：列出定时任务、状态，以及试运行一次任务
 * `/new`：启动一个新 session
-* `/session`：使用一个之前的 session
+* `/session`：使用之前的 session，或清空全部已保存 session
 * `/abort`：中止当前正在执行的交互式 agent turn
 * `/restart`：重启服务
 
